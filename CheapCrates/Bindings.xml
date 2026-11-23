@@ -1,0 +1,11 @@
+<Bindings>
+	<!-- Loaded by the client automatically (never list this file in the .toc).
+	     The body runs as a hardware (key) event, which is what C_AuctionHouse.PlaceBid and
+	     C_AuctionHouse.StartCommoditiesPurchase require. -->
+	<Binding name="CHEAPCRATES_BUY" category="ADDONS">
+		CheapCrates_BuyPressed()
+	</Binding>
+	<Binding name="CHEAPCRATES_TOGGLE" category="ADDONS">
+		CheapCrates_Toggle()
+	</Binding>
+</Bindings>
