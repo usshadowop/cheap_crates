@@ -1,7 +1,7 @@
 --[[
 	Cheap Crates - the window.
 
-	  [Scan]  status                      [x] Use bag items  [ ] Best fill only  [x] Scroll = BUY
+	  [Scan]  status                    [x] Use bags + bank  [ ] Best fill only  [x] Scroll = BUY
 	  [Crates] [Shopping list]                                        Merchant's Favor: 123
 	  Crate             Fill with         Crate    Fill    Total  Favor  Per Favor
 	  ...rows (Buy button on each)...
@@ -384,7 +384,7 @@ goalEdit:SetNumeric(true)
 goalEdit:SetMaxLetters(6)
 goalEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus(); ns.PlanGoal(tonumber(self:GetText())) end)
 goalEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-Tip(goalEdit, "How much Merchant's Favor you need. Plan finds the cheapest mix of crates and bundles that adds up to at least this much, using what is in your bags first when \"Use bag items\" is ticked, and turns it into a shopping list.")
+Tip(goalEdit, "How much Merchant's Favor you need. Plan finds the cheapest mix of crates and bundles that adds up to at least this much, using what is in your bags and bank first when \"Use bags + bank\" is ticked, and turns it into a shopping list.")
 
 local planBtn = CreateFrame("Button", "CheapCratesPlanButton", frame, "UIPanelButtonTemplate")
 planBtn:SetSize(56, 22)

@@ -2,7 +2,7 @@
 	Cheap Crates - settings, helpers and the pricing engine.
 
 	Pricing model. Every item (crate or fill material) has a "ladder": the units you already
-	carry (when "Use bag items" is ticked) come first at no cost, then the auction house
+	own (when "Use bags + bank" is ticked) come first at no cost, then the auction house
 	listings from cheapest to dearest. Buying N units costs the next N rungs of the ladder.
 	Commodities (stackable goods) are bought by the unit, so a partial row costs only the units
 	taken; non-stackable auctions are whole lots, so touching a lot costs its full buyout.
