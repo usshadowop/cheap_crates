@@ -17,19 +17,78 @@ local function QueueBusy()
 	return false
 end
 
-function ns.BuyCombo(combo)
+-- A scan is running: do `again` when it finishes. Returns true when the caller should stop.
+local function WaitForScan(again)
+	local sc = S.scan
+	if not sc then return false end
+	if sc.mode == "plan" then
+		ns.Print("Still reading prices for the last request; one moment.")
+	else
+		sc.afterScan = again
+		ns.Print("Will do that as soon as the scan finishes.")
+	end
+	return true
+end
+
+-- items a plan buys more than one of whose price is only the key pass's floor
+local function EstimatedBuys(plan)
+	local ids = {}
+	for _, bu in ipairs(plan.buys) do
+		local b = ns.db.book[bu.itemID]
+		if b and b.est and bu.qty > 1 then ids[#ids + 1] = bu.itemID end
+	end
+	return ids
+end
+
+-- explicit crates + bundles -> shopping list (exact prices read first, when needed)
+local function BuyUnits(list, title, useBags, exact)
 	if QueueBusy() then return end
-	local plan = ns.PlanUnits({ { crate = combo.crate, fill = combo.fill } }, ns.db.useBags)
+	if WaitForScan(function() BuyUnits(list, title, useBags, exact) end) then return end
+	local plan = ns.PlanUnits(list, useBags)
+	if not exact and S.ahOpen then
+		local est = EstimatedBuys(plan)
+		if #est > 0 then
+			ns.StartRefine(est, function() BuyUnits(list, title, useBags, true) end)
+			return
+		end
+	end
 	if S.queue and not S.queue.finished then ns.Print("Replaced the previous shopping list.") end
-	local title = ("%s + %d %s"):format(combo.crate.short, combo.fill.qty, ns.ItemName(combo.fill.item))
 	if plan.short then
 		ns.Print("|cffffff00Not enough listed for %s at the last scan.|r The list will buy what is there; scan again for fresh prices.", title)
 	end
 	ns.StartQueue(plan, title)
-	if ns.frame:IsShown() then ns.offset = 0 end
+	ns.offset = 0
 end
 
-function ns.PlanGoal(n)
+function ns.BuyCombo(combo)
+	BuyUnits({ { crate = combo.crate, fill = combo.fill } },
+		("%s + %d %s"):format(combo.crate.short, combo.fill.qty, ns.ItemName(combo.fill.item)), ns.db.useBags)
+end
+
+-- In bags tab: buy what is missing so every crate in your bags gets a bundle and every
+-- complete bundle gets a crate (always counts your bags, whatever the tick box says)
+function ns.BuyMissing(row)
+	local units = {}
+	for _, p in ipairs(row.parts) do
+		if p.n > 0 then units[#units + 1] = { crate = row.crate, fill = p.fill, count = p.n } end
+	end
+	local extra = row.crates - row.bundles
+	if extra > 0 then
+		local best
+		for _, r in ipairs(ns.Combos()) do
+			if r.crate == row.crate and not r.stackBlocked and r.fillCost and (not best or r.fillCost < best.fillCost) then best = r end
+		end
+		if not best then
+			ns.Print("No bundle for %s is priced: scan the auction house first.", row.crate.short)
+			return
+		end
+		units[#units + 1] = { crate = row.crate, fill = best.fill, count = extra }
+	end
+	if #units == 0 then return end
+	BuyUnits(units, ("Complete %s from bags"):format(row.crate.short), true)
+end
+
+function ns.PlanGoal(n, exact)
 	if not n or n <= 0 then
 		ns.Print("Enter how much Merchant's Favor you need, e.g. /crates goal 200")
 		return
@@ -40,11 +99,23 @@ function ns.PlanGoal(n)
 		ns.Print("No prices yet: open the auction house and press Scan first.")
 		return
 	end
+	if WaitForScan(function() ns.PlanGoal(n, exact) end) then return end
 	ns.db.goal = n
 	local plan = ns.PlanFavor(n, ns.db.useBags)
 	if #plan.units == 0 then
 		ns.Print("No crate can be filled from the current prices (none listed, or all above your level). Scan again later.")
 		return
+	end
+	-- read exact prices for what the plan buys, then plan again (the plan can change when an
+	-- estimate turns out dearer); a few rounds at most
+	exact = exact or 0
+	if S.ahOpen and exact < 4 then
+		local est = EstimatedBuys(plan)
+		if #est > 0 then
+			if exact == 0 then ns.Print("Reading exact prices for the plan...") end
+			ns.StartRefine(est, function() ns.PlanGoal(n, exact + 1) end)
+			return
+		end
 	end
 	if plan.short then
 		ns.Print("|cffff4444Only %d of %d Favor can be bought|r from what is listed (%d crates for %s).", plan.favor, n, #plan.units, ns.CoinsFull(plan.cost))
@@ -191,7 +262,8 @@ local function OnOff(v) return v == "on" or v == "1" or v == "true" or v == "yes
 local function Help()
 	ns.Print("Commands (/crates or /cheapcrates):")
 	ns.Print("  /crates  open or close the window")
-	ns.Print("  /crates scan  price every crate and fill material (auction house open)")
+	ns.Print("  /crates scan  quick scan: every crate and material, exact prices for the top 10 (a few seconds)")
+	ns.Print("  /crates scan full  every listing of every item (about a minute; also shift-click Scan)")
 	ns.Print("  /crates goal <favor>  cheapest way to that much Merchant's Favor, as a shopping list")
 	ns.Print("  /crates top [n]  the n cheapest crates per Favor in chat")
 	ns.Print("  /crates buy  press BUY (same as the button / key binding)")
@@ -238,7 +310,7 @@ SlashCmdList.CHEAPCRATES = function(msg)
 	elseif cmd == "help" or cmd == "?" then
 		Help()
 	elseif cmd == "scan" then
-		if S.scan then ns.StopScan() else ns.StartScan() end
+		if S.scan then ns.StopScan() else ns.StartScan(rest:lower() == "full" and "full" or "quick") end
 	elseif cmd == "stop" then
 		ns.StopScan()
 	elseif cmd == "goal" or cmd == "plan" then

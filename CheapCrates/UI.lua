@@ -30,6 +30,7 @@ local COLS = {
 local HEADERS = {
 	crates = { name = "Crate", fill = "Fill with (any one)", crate = "Crate", fillc = "Fill", total = "Total", favor = "Favor", per = "Per Favor" },
 	shop = { name = "Item", fill = "Buy", crate = "In bags", fillc = "", total = "Planned", favor = "Status", per = "Paid" },
+	bags = { name = "Crate", fill = "Fill materials in bags", crate = "Crates", fillc = "Bundles", total = "Can fill", favor = "Favor", per = "Missing" },
 }
 local SORTABLE = { name = "name", total = "total", favor = "favor", per = "per" }
 
@@ -101,11 +102,11 @@ scanBtn:SetSize(76, 22)
 scanBtn:SetPoint("TOPLEFT", 10, -30)
 scanBtn:SetText("Scan")
 scanBtn:SetScript("OnClick", function()
-	if S.scan then ns.StopScan() else ns.StartScan() end
+	if S.scan then ns.StopScan() else ns.StartScan(IsShiftKeyDown() and "full" or "quick") end
 end)
 Tip(scanBtn, function()
 	if not S.ahOpen then return "Open the auction house to scan." end
-	return "Prices every Waylaid Crate and every fill material on the auction house (about a minute: the server allows ~100 requests a minute). Click again to stop."
+	return "Click: quick scan, a few seconds. The lowest price of all 126 crates and materials in two requests, then exact prices for the items that decide the top 10.\n\nShift-click: full scan, every listing of every item (about a minute: the server allows ~100 requests a minute).\n\nClick again to stop."
 end)
 
 local scanText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -145,16 +146,18 @@ local function Tab(text, view, x, width)
 	b:SetScript("OnClick", function() ns.db.view = view; ns.offset = 0; ns.UpdateUI(true) end)
 	return b
 end
-local cratesTab = Tab("Crates", "crates", 10, 90)
-local shopTab = Tab("Shopping list", "shop", 102, 116)
+local cratesTab = Tab("Crates", "crates", 10, 80)
+local shopTab = Tab("Shopping list", "shop", 92, 116)
+local bagsTab = Tab("In bags", "bags", 210, 96)
+Tip(bagsTab, "How many crates you can fill right now with the crates and fill materials in your bags.")
 
 local favorText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 favorText:SetPoint("TOPRIGHT", -14, -62)
 favorText:SetJustifyH("RIGHT")
 
 local viewHint = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-viewHint:SetPoint("LEFT", shopTab, "RIGHT", 10, 0)
-viewHint:SetWidth(300)
+viewHint:SetPoint("LEFT", bagsTab, "RIGHT", 10, 0)
+viewHint:SetWidth(230)
 viewHint:SetJustifyH("LEFT")
 
 -- column headers -----------------------------------------------------------------------------
@@ -229,7 +232,7 @@ local function RowTooltip(row)
 			GameTooltip:AddLine(("You need level %d for this crate, so plans leave it out (/crates levels off to include it)."):format(c.level), 1, 0.4, 0.4, true)
 		end
 		if d.combo.est then
-			GameTooltip:AddLine("~ = estimate from the lowest listed price (the detailed scan has not reached this item yet).", 0.7, 0.7, 0.7, true)
+			GameTooltip:AddLine("~ = at least this much: the lowest listed price times the bundle size. Some of the bundle may sit on dearer listings. Buy and Plan read the exact price first.", 0.7, 0.7, 0.7, true)
 		end
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("Click Buy to put this crate and bundle on the shopping list.", 0.7, 0.7, 0.7, true)
@@ -249,6 +252,29 @@ local function RowTooltip(row)
 		GameTooltip:AddDoubleLine("Favor", tostring(g.favor), 0.8, 0.8, 0.8, 1, 1, 1)
 		GameTooltip:AddDoubleLine("Cost", ns.CoinsFull(g.cost), 0.8, 0.8, 0.8, 1, 1, 1)
 		GameTooltip:AddDoubleLine("Per Favor", ns.CoinsFull(g.cost / math.max(1, g.favor)), 0.8, 0.8, 0.8, 1, 1, 1)
+	elseif d.kind == "bag" then
+		local b = d.bag
+		local c = b.crate
+		GameTooltip:AddLine(c.name)
+		GameTooltip:AddDoubleLine("Empty crates in bags", tostring(b.crates), 0.8, 0.8, 0.8, 1, 1, 1)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("Fill materials in bags:", 1, 0.82, 0)
+		if #b.parts == 0 then GameTooltip:AddLine("none", 0.6, 0.6, 0.6) end
+		for _, p in ipairs(b.parts) do
+			local right
+			if p.blocked then right = "|cffff4444bundle is bigger than a stack|r"
+			elseif p.n > 0 then right = ("%d bundle%s"):format(p.n, p.n == 1 and "" or "s") .. ((p.have % p.fill.qty > 0) and (" + %d spare"):format(p.have % p.fill.qty) or "")
+			else right = ("%d more for a bundle"):format(p.fill.qty - p.have) end
+			GameTooltip:AddDoubleLine(("%d %s (bundle of %d)"):format(p.have, ns.ItemName(p.fill.item), p.fill.qty), right, 1, 1, 1, 1, 1, 1)
+		end
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddDoubleLine("Can fill now", ("%d (%d Favor)"):format(b.can, b.favor), 0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		if b.levelBlocked then GameTooltip:AddLine(("Needs level %d."):format(c.level), 1, 0.4, 0.4) end
+		if b.spareBundles > 0 then
+			GameTooltip:AddLine(("%d bundle%s without a crate: Buy gets the crate%s."):format(b.spareBundles, b.spareBundles == 1 and "" or "s", b.spareBundles == 1 and "" or "s"), 0.7, 0.7, 0.7, true)
+		elseif b.spareCrates > 0 then
+			GameTooltip:AddLine(("%d crate%s without a bundle: Buy gets the cheapest bundle for each."):format(b.spareCrates, b.spareCrates == 1 and "" or "s"), 0.7, 0.7, 0.7, true)
+		end
 	else
 		GameTooltip:Hide()
 		return
@@ -280,7 +306,8 @@ local function GetRow(i)
 	row.buy:SetText("Buy")
 	row.buy:SetScript("OnClick", function(self)
 		local d = self:GetParent().data
-		if d and d.kind == "combo" then ns.BuyCombo(d.combo) end
+		if d and d.kind == "combo" then ns.BuyCombo(d.combo)
+		elseif d and d.kind == "bag" then ns.BuyMissing(d.bag) end
 	end)
 	row:SetScript("OnEnter", RowTooltip)
 	row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -446,10 +473,11 @@ local function SortCombos(list)
 end
 
 local function CostCell(cost, ladder, need, missing)
+	-- a key-pass price is exact for one unit and a floor for more
 	if ladder.have >= need then return "|cff00ff00bags|r" end
 	if cost then
 		local s = ns.Coins(cost)
-		if ladder.est then s = "~" .. s end
+		if ladder.est and need - ladder.have > 1 then s = "~" .. s end
 		return s
 	end
 	if missing == "unscanned" then return "|cff888888?|r" end
@@ -468,6 +496,18 @@ local function BuildData()
 		end
 		SortCombos(shown)
 		for _, r in ipairs(shown) do data[#data + 1] = { kind = "combo", combo = r } end
+	elseif ns.db.view == "bags" then
+		local rows, sum = ns.BagFill()
+		local text
+		if #rows == 0 then
+			text = "|cff888888No Waylaid Crates or fill materials in your bags.|r"
+		else
+			text = ("|cffffd100Ready to fill now:|r |cff00ff00%d crate%s|r (%d Favor)"):format(sum.can, sum.can == 1 and "" or "s", sum.favor)
+			if sum.spareBundles > 0 then text = text .. ("   |cffaaaaaa%d bundle%s need a crate|r"):format(sum.spareBundles, sum.spareBundles == 1 and "" or "s") end
+			if sum.spareCrates > 0 then text = text .. ("   |cffaaaaaa%d crate%s need a bundle|r"):format(sum.spareCrates, sum.spareCrates == 1 and "" or "s") end
+		end
+		data[1] = { kind = "text", text = text }
+		for _, r in ipairs(rows) do data[#data + 1] = { kind = "bag", bag = r } end
 	else
 		local q = S.queue
 		if not q then
@@ -519,6 +559,30 @@ local function DrawRow(row, d)
 		c.total:SetText(ns.Coins(g.cost))
 		c.favor:SetText("+" .. g.favor)
 		c.per:SetText("")
+	elseif d.kind == "bag" then
+		local b = d.bag
+		local color = b.levelBlocked and "|cff888888" or (b.can > 0 and "|cff00ff00" or "|cffffffff")
+		c.name:SetText(color .. b.crate.short .. "|r")
+		local parts = {}
+		for _, p in ipairs(b.parts) do
+			local name = ns.ItemName(p.fill.item)
+			if p.blocked then parts[#parts + 1] = "|cffff4444" .. name .. "|r"
+			elseif p.n > 0 then parts[#parts + 1] = ("%dx %s"):format(p.n, name)
+			else parts[#parts + 1] = ("|cff888888%d/%d %s|r"):format(p.have, p.fill.qty, name) end
+		end
+		c.fill:SetText(#parts > 0 and table.concat(parts, ", ") or "|cff888888none|r")
+		c.crate:SetText(tostring(b.crates))
+		c.fillc:SetText(tostring(b.bundles))
+		c.total:SetText(b.can > 0 and ("|cff00ff00%d|r"):format(b.can) or "0")
+		c.favor:SetText(b.favor > 0 and tostring(b.favor) or "")
+		if b.spareBundles > 0 then
+			c.per:SetText(("+%d crate%s"):format(b.spareBundles, b.spareBundles == 1 and "" or "s"))
+		elseif b.spareCrates > 0 then
+			c.per:SetText(("+%d bundle%s"):format(b.spareCrates, b.spareCrates == 1 and "" or "s"))
+		end
+		row.buy:SetShown(true)
+		row.buy:SetEnabled(not b.levelBlocked and (b.spareBundles > 0 or b.spareCrates > 0))
+		if b.can > 0 then row.bg:SetColorTexture(0, 0.6, 0, 0.12) end
 	elseif d.kind == "step" then
 		local st = d.step
 		local crate = ns.CRATE_BY_ID[st.itemID]
@@ -548,15 +612,18 @@ local function Draw()
 	wheelCheck:SetChecked(db.wheel)
 	cratesTab:SetEnabled(view ~= "crates")
 	shopTab:SetEnabled(view ~= "shop")
+	bagsTab:SetEnabled(view ~= "bags")
+	local _, bagSum = ns.BagFill()
+	bagsTab:SetText(bagSum.can > 0 and ("In bags (%d)"):format(bagSum.can) or "In bags")
 	local q = S.queue
 	shopTab:SetText((q and not q.finished) and ("Shopping list (%d)"):format(#q.steps - q.idx + 1) or "Shopping list")
 
 	-- scan status
 	scanBtn:SetText(S.scan and "Stop" or "Scan")
 	scanBtn:SetEnabled(S.ahOpen and not (q and not q.finished) or S.scan ~= nil)
-	local done, total, what = ns.ScanProgress()
-	if done then
-		scanText:SetText(("|cffffff00Scanning:|r %s %d/%d"):format(what, done, total))
+	local progress = ns.ScanProgress()
+	if progress then
+		scanText:SetText("|cffffff00" .. progress .. "|r")
 	elseif db.lastScan then
 		scanText:SetText(("Prices from %s ago"):format(Age(db.lastScan)) .. (S.ahOpen and "" or "  |cff888888(AH closed)|r"))
 	else
@@ -568,6 +635,8 @@ local function Draw()
 
 	if view == "crates" then
 		viewHint:SetText(ns.db.bestOnly and "Cheapest bundle per crate" or "Every crate + bundle, cheapest per Favor first")
+	elseif view == "bags" then
+		viewHint:SetText("Buy gets what is missing to pair them up")
 	else
 		viewHint:SetText(q and q.title or "")
 	end

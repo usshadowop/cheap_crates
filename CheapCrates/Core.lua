@@ -280,7 +280,8 @@ function ns.Combos()
 				total = (cc and fc) and (cc + fc) or nil,
 				crateLadder = cl, fillLadder = fl,
 				crateMissing = Missing(cl, 1), fillMissing = Missing(fl, o.qty),
-				est = (cl.est and cl.have < 1) or (fl.est and fl.have < o.qty),
+				-- a key-pass price is exact for one unit (the crate) but only a floor for a bundle
+				est = fl.est and (o.qty - fl.have) > 1,
 				levelBlocked = ns.LevelBlocked(c),
 				stackBlocked = stackBad, stack = stack,
 				favorEst = ns.FavorIsEstimate(c),
@@ -310,6 +311,52 @@ function ns.Combos()
 	end
 	if cheapest then cheapest.cheapest = true end
 	return list
+end
+
+-------------------------------------------------------------------------------
+-- What your bags can fill right now (In bags tab)
+-------------------------------------------------------------------------------
+
+-- rows: one per crate you hold a crate or any fill material for
+--   { crate, crates, bundles, can, favor, parts = { {fill, have, n, blocked} }, spareCrates, spareBundles }
+-- sum: { can, favor, spareCrates, spareBundles }
+function ns.BagFill()
+	local rows = {}
+	local sum = { can = 0, favor = 0, spareCrates = 0, spareBundles = 0 }
+	for _, c in ipairs(ns.CRATES) do
+		local crates = ns.BagCount(c.id)
+		local bundles, parts = 0, {}
+		for _, o in ipairs(c.fills) do
+			local have = ns.BagCount(o.item)
+			if have > 0 then
+				-- a bundle bigger than one stack cannot go in (reported crate quirk)
+				local blocked = ns.StackBlocked(o)
+				local n = blocked and 0 or math.floor(have / o.qty)
+				bundles = bundles + n
+				parts[#parts + 1] = { fill = o, have = have, n = n, blocked = blocked }
+			end
+		end
+		if crates > 0 or #parts > 0 then
+			local levelBlocked = ns.LevelBlocked(c)
+			local can = levelBlocked and 0 or math.min(crates, bundles)
+			local row = {
+				crate = c, crates = crates, bundles = bundles, can = can, favor = can * ns.FavorFor(c), parts = parts,
+				spareCrates = math.max(0, crates - bundles), spareBundles = math.max(0, bundles - crates),
+				levelBlocked = levelBlocked,
+			}
+			rows[#rows + 1] = row
+			sum.can = sum.can + can
+			sum.favor = sum.favor + row.favor
+			sum.spareCrates = sum.spareCrates + row.spareCrates
+			sum.spareBundles = sum.spareBundles + row.spareBundles
+		end
+	end
+	table.sort(rows, function(a, b)
+		if a.can ~= b.can then return a.can > b.can end
+		if (a.crates + a.bundles) ~= (b.crates + b.bundles) then return (a.crates + a.bundles) > (b.crates + b.bundles) end
+		return a.crate.name < b.crate.name
+	end)
+	return rows, sum
 end
 
 -------------------------------------------------------------------------------

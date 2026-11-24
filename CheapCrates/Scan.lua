@@ -9,13 +9,15 @@
 	   files the listings under: Forever files commodities under a key that carries the item's
 	   level, and a level-0 key built from the ID alone is a separate, empty key. The scan adopts
 	   the server's key for every item that is listed.
-	2. Detail pass. One SendSearchQuery (or Refresh*, for a key the client already holds) per
-	   listed item gives every listing: unit price and quantity for commodities, auction ID and
-	   buyout for other items. Crates are always searched in detail, even if the key pass did not
-	   list them, in case their key differs.
+	   All 126 items take two requests, about a second.
+	2. Detail reads. One SendSearchQuery (or Refresh*, for a key the client already holds) per
+	   item gives every listing: unit price and quantity for commodities, auction ID and buyout
+	   for other items. The key pass cannot say how many units sit at the lowest price, so a
+	   bundle of 20 needs this read to be priced exactly. The default scan reads only the items
+	   that decide the top of the list (see "Scan driver" below); a full scan reads them all.
 
 	Every request waits for C_AuctionHouse.IsThrottledMessageSystemReady() (about 100 requests a
-	minute). A full scan is ~2 key requests plus one request per listed item, about a minute.
+	minute), which is why reading every item one by one takes about a minute.
 ]]
 
 local _, ns = ...
@@ -190,7 +192,7 @@ function ns.ResultsArrived(id)
 	if sc and sc.inflight and sc.inflight.id == id then
 		sc.inflight = nil
 		sc.done = sc.done + 1
-		sc.qi = sc.qi + 1
+		if sc.phase == "detail" then sc.qi = sc.qi + 1 end
 	end
 	if ns.OnBuyResults then ns.OnBuyResults(id) end
 	ns.UpdateUI()
@@ -198,9 +200,29 @@ end
 
 -------------------------------------------------------------------------------
 -- Scan driver
+--
+-- quick (default): the key pass prices all 126 items in two requests: each item's lowest
+--   price and how many are listed. That alone is exact for one unit (a crate) but only a
+--   floor for a bundle of 20 (some of it may sit on dearer listings), so those show as "~".
+--   The refine phase then reads full listings only where it matters: it keeps taking the
+--   cheapest crate + bundle per Favor that still has an estimated bundle and reads that item,
+--   until the top REFINE_TOP are all exact. Every estimate is a floor, so nothing below them
+--   can be cheaper. Usually 10-20 requests instead of 126.
+-- full (shift-click Scan, /crates scan full): reads every listed item, about a minute.
+-- plan (ns.StartRefine): reads just the items a Plan or a Buy is about to use.
 -------------------------------------------------------------------------------
 
-function ns.StartScan()
+ns.REFINE_TOP = 10
+
+local function NewScan(mode, ids)
+	return {
+		mode = mode, t = GetTime(), started = time(), phase = "keys", ids = ids or {}, bi = 1,
+		quick = {}, queue = {}, qi = 1, done = 0, refined = {}, inflight = nil,
+	}
+end
+
+function ns.StartScan(mode)
+	mode = mode or "quick"
 	if not S.ahOpen then
 		ns.Print("Open the auction house first, then press Scan.")
 		return false
@@ -209,16 +231,27 @@ function ns.StartScan()
 		ns.Print("Finish or cancel the shopping list before scanning again (it uses the same request budget).")
 		return false
 	end
+	if S.scan then return false end
 	local ids = {}
 	for _, id in ipairs(ns.ALL_ITEMS) do ids[#ids + 1] = id end
-	S.scan = {
-		t = GetTime(), started = time(), phase = "keys", ids = ids, bi = 1, batch = nil,
-		quick = {}, queue = {}, qi = 1, done = 0, inflight = nil,
-	}
-	ns.Print("Scanning %d items (%d crates and their fill materials)...", #ids, #ns.CRATES)
+	S.scan = NewScan(mode, ids)
+	if mode == "full" then
+		ns.Print("Full scan: every listing of all %d items (about a minute)...", #ids)
+	end
 	ns.ScanPump()
 	ns.UpdateUI(true)
 	return true
+end
+
+-- reads the full listings of just these items, then calls onDone (Plan and Buy use this)
+function ns.StartRefine(ids, onDone)
+	local sc = NewScan("plan")
+	sc.phase = "detail"
+	sc.queue = ids
+	sc.onDone = onDone
+	S.scan = sc
+	ns.ScanPump()
+	ns.UpdateUI(true)
 end
 
 function ns.StopScan(quiet)
@@ -228,11 +261,10 @@ function ns.StopScan(quiet)
 	ns.UpdateUI(true)
 end
 
+-- full scan: every crate, then every listed fill item
 local function BuildDetailQueue(sc)
 	local q = {}
-	-- crates first: always searched (the key pass cannot be trusted to know their key)
 	for _, c in ipairs(ns.CRATES) do q[#q + 1] = c.id end
-	-- fill items that are listed, cheapest-looking crates first so the list fills in usefully
 	local fills = {}
 	for _, id in ipairs(sc.ids) do
 		if not ns.CRATE_BY_ID[id] then
@@ -240,7 +272,6 @@ local function BuildDetailQueue(sc)
 			if qk and qk.listed > 0 then
 				fills[#fills + 1] = { id = id, score = qk.min or math.huge }
 			elseif not sc.keyPassFailed then
-				-- the key pass saw none listed
 				ns.db.book[id] = { t = time(), commodity = true, rows = {}, listed = 0 }
 			else
 				fills[#fills + 1] = { id = id, score = math.huge }
@@ -253,31 +284,68 @@ local function BuildDetailQueue(sc)
 	sc.qi = 1
 end
 
+local function AfterKeyPass(sc)
+	if sc.mode == "full" or sc.keyPassFailed then
+		sc.phase = "detail"
+		BuildDetailQueue(sc)
+		return
+	end
+	-- an item the key pass did not list is not on the auction house
+	for _, id in ipairs(sc.ids) do
+		local qk = sc.quick[id]
+		if qk and qk.listed == 0 then
+			ns.db.book[id] = { t = time(), commodity = RT(id).isCommodity, rows = {}, listed = 0 }
+		end
+	end
+	sc.phase = "refine"
+end
+
+-- next item whose full listings decide the top of the list, or nil when the top is exact
+function ns.NextToRefine(skip)
+	local ok = {}
+	for _, r in ipairs(ns.Combos()) do
+		if r.eligible then ok[#ok + 1] = r end
+	end
+	table.sort(ok, function(a, b) return a.per < b.per end)
+	local exact = 0
+	for _, r in ipairs(ok) do
+		if r.est and not skip[r.fill.item] then return r.fill.item end
+		exact = exact + 1
+		if exact >= ns.REFINE_TOP then return nil end
+	end
+	return nil
+end
+
 local function FinishScan(sc)
 	S.scan = nil
+	if sc.onDone then
+		sc.onDone()
+		ns.UpdateUI(true)
+		return
+	end
 	ns.db.lastScan = time()
 	local listedCrates = 0
 	for _, c in ipairs(ns.CRATES) do
 		local b = ns.db.book[c.id]
 		if b and (b.listed or 0) > 0 then listedCrates = listedCrates + 1 end
 	end
-	ns.Print("Scan done: %d items priced, %d of %d crates listed.", sc.done, listedCrates, #ns.CRATES)
-	local combos = ns.Combos()
-	table.sort(combos, function(a, b)
-		if a.eligible ~= b.eligible then return a.eligible end
-		return (a.per or math.huge) < (b.per or math.huge)
-	end)
+	ns.Print("Scan done in %ds: %d items priced (%d read in full), %d of %d crates listed.",
+		math.floor(GetTime() - sc.t + 0.5), #sc.ids, sc.done, listedCrates, #ns.CRATES)
+	local combos = {}
+	for _, r in ipairs(ns.Combos()) do if r.eligible then combos[#combos + 1] = r end end
+	table.sort(combos, function(a, b) return a.per < b.per end)
 	for i = 1, 3 do
 		local r = combos[i]
-		if r and r.eligible then
+		if r then
 			ns.Print("  %d. %s + %d %s: %s (%s per Favor)", i, r.crate.short, r.fill.qty, ns.ItemName(r.fill.item),
 				ns.CoinsFull(r.total), ns.CoinsFull(r.per))
 		end
 	end
 	ns.UpdateUI(true)
+	if sc.afterScan then sc.afterScan() end
 end
 
--- answer to a key-pass request (AUCTION_HOUSE_BROWSE_RESULTS_UPDATED)
+-- answer to a key-pass request (AUCTION_HOUSE_BROWSE_RESULTS_UPDATED / _ADDED)
 function ns.OnBrowseResults()
 	local sc = S.scan
 	if not (sc and sc.batch and sc.batch.sent) then return end
@@ -309,22 +377,23 @@ function ns.OnBrowseResults()
 		sc.batch.sent = false
 		return
 	end
+	if ah.HasFullBrowseResults and not ah.HasFullBrowseResults() and (sc.batch.pages or 0) < 5 then
+		sc.batch.more = true -- the rest of the answer comes in pages; ScanPump asks for the next one
+		return
+	end
 	for _, id in ipairs(sc.batch.ids) do
 		local a = byItem[id]
 		if a and a.key then AdoptKey(id, a.key) end
 		sc.quick[id] = { listed = a and a.listed or 0, min = a and a.min }
-		-- an estimate until the detail pass prices the item properly
+		-- lowest price x everything listed: exact for one unit, a floor for more
 		local b = ns.db.book[id]
-		if a and a.min and a.listed > 0 and (not b or (b.t or 0) < sc.started) then
+		if a and a.min and a.listed > 0 and (not b or (b.t or 0) < sc.started or b.est) then
 			ns.db.book[id] = { t = time(), est = true, rows = { { unit = a.min, qty = a.listed } }, listed = a.listed }
 		end
 	end
 	sc.bi = sc.bi + #sc.batch.ids
 	sc.batch = nil
-	if sc.bi > #sc.ids then
-		sc.phase = "detail"
-		BuildDetailQueue(sc)
-	end
+	if sc.bi > #sc.ids then AfterKeyPass(sc) end
 	ns.UpdateUI(true)
 end
 
@@ -339,19 +408,27 @@ function ns.ScanPump()
 	if sc.phase == "keys" then
 		if not ah.SearchForItemKeys then
 			sc.keyPassFailed = true
-			sc.phase = "detail"
-			BuildDetailQueue(sc)
+			AfterKeyPass(sc)
+			return
+		end
+		if sc.batch and sc.batch.more then
+			if not ns.ThrottleReady() then return end
+			sc.batch.more = false
+			sc.batch.pages = (sc.batch.pages or 0) + 1
+			sc.batch.t = now
+			S.lastSend = now
+			ah.RequestMoreBrowseResults()
 			return
 		end
 		if sc.batch and sc.batch.sent then
 			if now - sc.batch.t < BATCH_TIMEOUT then return end
 			sc.batch.tries = (sc.batch.tries or 0) + 1
 			if sc.batch.tries >= 2 then
-				-- no answer: price these items in the detail pass instead
+				-- no answer: price these items one by one instead
 				sc.keyPassFailed = true
 				sc.bi = sc.bi + #sc.batch.ids
 				sc.batch = nil
-				if sc.bi > #sc.ids then sc.phase = "detail"; BuildDetailQueue(sc) end
+				if sc.bi > #sc.ids then AfterKeyPass(sc) end
 				return
 			end
 			sc.batch.sent = false
@@ -371,31 +448,49 @@ function ns.ScanPump()
 		return
 	end
 
-	-- detail pass
+	-- detail / refine: one item at a time
 	if sc.inflight then
 		if now - sc.inflight.t < DETAIL_TIMEOUT then return end
-		sc.inflight.tries = sc.inflight.tries + 1
-		if sc.inflight.tries >= 2 then
-			ns.Print("No answer for %s; skipped.", ns.ItemName(sc.inflight.id))
-			RT(sc.inflight.id).awaiting = nil
-			sc.inflight = nil
-			sc.qi = sc.qi + 1
+		if sc.inflight.tries < 1 then
+			if not ns.ThrottleReady() then return end
+			sc.inflight.tries = sc.inflight.tries + 1
+			sc.inflight.t = now
+			ns.SendDetail(sc.inflight.id) -- ask once more
+			return
 		end
+		ns.Print("No answer for %s; skipped.", ns.ItemName(sc.inflight.id))
+		RT(sc.inflight.id).awaiting = nil
+		sc.inflight = nil
+		if sc.phase == "detail" then sc.qi = sc.qi + 1 end
 	end
-	if sc.qi > #sc.queue then
+	local id
+	if sc.phase == "refine" then
+		id = ns.NextToRefine(sc.refined)
+	else
+		id = sc.queue[sc.qi]
+	end
+	if not id then
 		FinishScan(sc)
 		return
 	end
 	if not ns.ThrottleReady() then return end
-	local id = sc.queue[sc.qi]
-	local tries = (sc.inflight and sc.inflight.id == id) and sc.inflight.tries or 0
-	sc.inflight = { id = id, t = now, tries = tries }
+	sc.refined[id] = true
+	sc.inflight = { id = id, t = now, tries = 0 }
 	ns.SendDetail(id)
 end
 
+-- one line for the window's status text, or nil when idle
 function ns.ScanProgress()
 	local sc = S.scan
 	if not sc then return nil end
-	if sc.phase == "keys" then return 0, #sc.ids, "checking keys" end
-	return sc.qi - 1, #sc.queue, "pricing"
+	if sc.mode == "plan" then
+		return ("Reading exact prices %d/%d..."):format(sc.qi - 1, #sc.queue)
+	end
+	if sc.phase == "keys" then
+		return ("Scanning: lowest prices of %d items..."):format(#sc.ids)
+	end
+	if sc.phase == "refine" then
+		return ("Scanning: exact prices for the top %d (%d read)..."):format(ns.REFINE_TOP, sc.done)
+	end
+	return ("Full scan: %d/%d..."):format(sc.qi - 1, #sc.queue)
 end

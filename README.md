@@ -4,11 +4,13 @@ Finds the cheapest way to earn **Merchant's Favor** from Waylaid Crates, and buy
 
 - Knows every Waylaid Crate in the game (30 of them) and every bundle that fills each one
   (96 bundles in all).
-- **Scan** prices every crate and every fill material on the auction house.
+- **Scan** prices every crate and every fill material on the auction house in a few seconds.
 - Lists every crate + bundle combination with its total cost and **cost per Merchant's
   Favor**, since crates pay different amounts of Favor (5 to 40).
 - **Use bag items** tick box: crates and materials you already carry are used first and cost
   nothing, so a stack of Silverleaf in your bags takes the Silverleaf off the bill.
+- **In bags** tab: how many crates you can fill right now with what you carry, and a Buy
+  button for whatever is missing to pair them up.
 - **Buy** on any row puts that crate and its bundle on a shopping list.
 - **Favor needed**: type how much Favor you need, press **Plan**, and it works out the
   cheapest mix of crates and bundles that adds up to at least that much. The total cost is
@@ -33,10 +35,10 @@ which was checked against Blizzard's UI source for this build.
 
 Go to an auctioneer. The window opens next to the auction house (`/crates` opens it anywhere).
 
-1. Press **Scan**. It prices 126 items: the 30 crates plus every fill material. The server
-   allows about 100 auction house requests a minute, so a full scan takes about a minute.
-   The list fills in as it goes. Prices marked `~` are estimates from the lowest listing
-   until the detailed pass reaches that item.
+1. Press **Scan**. It prices 126 items: the 30 crates plus every fill material. That takes a
+   few seconds (details under "Why the scan is quick" below). Prices marked `~` are floors:
+   the real price can only be the same or higher. Shift-click **Scan** (or `/crates scan full`)
+   for a full scan that reads every listing of every item, about a minute.
 2. The **Crates** tab lists every crate + bundle, cheapest per Favor first. The cheapest
    overall is green. Columns: crate price, fill price (for the whole bundle, walking up the
    listings: if the cheapest 15 Silverleaf are 20c and the rest 30c, 20 Silverleaf costs
@@ -54,6 +56,29 @@ Go to an auctioneer. The window opens next to the auction house (`/crates` opens
 4. The **Shopping list** tab shows the crates to fill and the items to buy: crates first,
    then materials, each with its planned price. Press **BUY** once per item, using the button,
    your key, or the **scroll wheel**.
+5. The **In bags** tab shows what you can fill right now. The tab reads "In bags (3)" when you
+   carry 3 crates that have a full bundle each. Per crate it lists empty crates, complete
+   bundles (and partial ones like `12/20 Silverleaf`), how many you can fill, the Favor that
+   is worth, and what is missing ("+2 crates" or "+1 bundle"). **Buy** on a row gets just
+   that: crates for spare bundles, or the cheapest bundle for each spare crate. A bundle
+   bigger than one stack does not count, and neither does a crate above your level.
+
+### Why the scan is quick
+
+The auction house takes up to 100 items per request (`SearchForItemKeys`), so all 126 items
+cost two requests, about a second. That answer gives each item's lowest price and how many are
+listed. It does not say how many units sit at that lowest price, though. "Silverleaf: 2c, 500
+listed" could be 1 unit at 2c and 499 at 50c, which is a very different price for a bundle of
+20. That needs one more request per item, and the server allows only about 100 requests a
+minute. Reading every item that way is what a full scan does, and why it takes a minute.
+
+The quick scan reads the full listings only where they decide the answer. It takes the
+cheapest crate + bundle per Favor that still has a `~` price, reads that one material, and
+repeats until the top 10 are all exact. A `~` price is a floor, so nothing further down can be
+cheaper than those 10. That is usually 10 to 20 requests. A crate's own price is exact straight
+away, since one crate is one listing. **Buy** and **Plan** read the exact price of anything they
+are about to buy more than one of before building the list. Each item's price is checked again
+right before its purchase anyway.
 
 ### Buying, and what protects your gold
 
@@ -98,7 +123,8 @@ over those curves then finds how many of each crate reach the goal for the least
 | Command | What it does |
 |---|---|
 | `/crates` | open or close the window |
-| `/crates scan` | scan the auction house (it must be open) |
+| `/crates scan` | quick scan: all 126 items, exact prices for the top 10 (a few seconds) |
+| `/crates scan full` | read every listing of every item (about a minute; also shift-click Scan) |
 | `/crates goal <favor>` | cheapest way to that much Favor, as a shopping list |
 | `/crates top [n]` | the n cheapest crates per Favor, in chat |
 | `/crates buy` / `skip` / `cancel` | BUY press / skip the current item / drop the list |
@@ -142,7 +168,8 @@ throttled auction house, including commodity quotes and the rule that purchases 
 press. The tests drive the addon through: scan, prices per Favor, bag counts, buying a single
 crate, price rises at the check and at the quote, a sold-out auction, the Favor planner
 (including the "one 10-Favor crate beats two 5-Favor crates" case), a crate selling out
-mid-list, the scroll wheel, the request gate, and slash commands. Run them with Lua 5.1, the
+mid-list, the scroll wheel, the request gate, quick vs full scans, the In bags tab, and slash
+commands. Run them with Lua 5.1, the
 game's Lua version:
 
 ```bash

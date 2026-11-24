@@ -61,9 +61,27 @@ local function Listings()
 end
 W.level = 15
 
-local function Rescan()
+-- runs a scan to the end; returns the game time it took
+local function Rescan(mode)
+	W.shift = (mode == "full")
 	click(CheapCratesScanButton)
-	W.run(40)
+	W.shift = false
+	local t0 = W.now
+	for _ = 1, 2400 do
+		W.tick(0.05)
+		if not ns.S.scan then break end
+	end
+	return W.now - t0
+end
+local function DetailCalls()
+	return countCalls("SendSearchQuery") + countCalls("RefreshCommoditySearchResults") + countCalls("RefreshItemSearchResults")
+end
+local function RunUntil(cond, seconds)
+	for _ = 1, math.floor((seconds or 10) / 0.05) do
+		if cond() then return true end
+		W.tick(0.05)
+	end
+	return cond()
 end
 
 print("== load")
@@ -87,18 +105,34 @@ Listings()
 W.fire("AUCTION_HOUSE_SHOW")
 check(CheapCratesFrame:IsShown(), "window shown with the auction house")
 W.calls = {}
-Rescan()
-check(ns.S.scan == nil and CheapCratesDB.lastScan ~= nil, "scan finished")
-check(countCalls("SearchForItemKeys") == 2, "key pass: two batch requests for 126 items")
+local took = Rescan()
+check(ns.S.scan == nil and CheapCratesDB.lastScan ~= nil, "quick scan finished")
+check(countCalls("SearchForItemKeys") == 2, "key pass: two batch requests price all 126 items")
+check(DetailCalls() == 7, "then exact listings for just the 7 bundles that decide the top of the list (" .. DetailCalls() .. " reads)")
+check(took < 6, ("quick scan took %.1f s of game time"):format(took))
 check(not W.throttleViolations, "never sent while the throttle was closed")
 check(#W.violations == 0, "no restricted calls during the scan")
 local b = CheapCratesDB.book
-check(b[HERBS] and b[HERBS].commodity == false and #b[HERBS].rows == 2 and b[HERBS].rows[1].auctionID == 1001, "crate auctions read with auction IDs")
-check(b[SILVERLEAF] and b[SILVERLEAF].commodity and #b[SILVERLEAF].rows == 2 and b[SILVERLEAF].listed == 115, "Silverleaf priced (server key adopted from the key pass)")
+check(b[HERBS] and b[HERBS].est and b[HERBS].rows[1].unit == 4000, "crate priced from the key pass (its lowest price is exact for one crate)")
+check(b[SILVERLEAF] and b[SILVERLEAF].commodity and not b[SILVERLEAF].est and #b[SILVERLEAF].rows == 2 and b[SILVERLEAF].listed == 115, "Silverleaf read in full (server key adopted from the key pass)")
 check(ns.R[SILVERLEAF].key.itemLevel == 5, "Silverleaf searched under the server's key, not the client's item level")
+check(b[LINEN] and b[LINEN].est, "a bundle that cannot be used (stack-blocked) is not read in full")
 check(b[2449] and b[2449].listed == 0, "unlisted fill item recorded as none listed")
-check(b[JHERBS] and b[JHERBS].listed == 0, "unlisted crate searched in detail and recorded as none listed")
+check(b[JHERBS] and b[JHERBS].listed == 0, "crate the key pass did not list is recorded as none listed")
 check(lastChat("Scan done") ~= nil, "scan summary printed")
+local top = {}
+for _, r in ipairs(ns.Combos()) do if r.eligible then top[#top + 1] = r end end
+local anyEst = false
+for _, r in ipairs(top) do if r.est then anyEst = true end end
+check(not anyEst, "every usable crate + bundle priced exactly")
+
+print("== full scan (shift-click Scan)")
+W.calls = {}
+took = Rescan("full")
+check(DetailCalls() >= 30 + 10, "reads every crate and every listed material (" .. DetailCalls() .. " reads)")
+check(not b[HERBS].est and #b[HERBS].rows == 2 and b[HERBS].rows[1].auctionID == 1001, "crate auctions read with auction IDs")
+check(not b[LINEN].est, "even unusable bundles read in full")
+check(took > 15, ("full scan takes longer (%.1f s)"):format(took))
 
 print("== prices per Favor")
 CheapCratesDB.useBags = false
@@ -254,7 +288,7 @@ check(q.finished and q.steps[1].paid == 5500 and q.steps[2].status == "done", "b
 CheapCratesDB.tolerance = 5
 
 print("== Favor goal planner")
-Listings(); Rescan()
+Listings(); Rescan("full") -- the planner itself, on full listings
 CheapCratesDB.useBags = false
 local plan = ns.PlanFavor(25, false)
 check(plan.favor == 25 and plan.cost == 18500 and not plan.short, "25 Favor: cheapest mix costs 18500")
@@ -284,6 +318,7 @@ CheapCratesDB.useBags = false
 print("== goal box -> shopping list -> buy everything with the scroll wheel")
 CheapCratesGoalEdit:SetText("25")
 click(CheapCratesPlanButton)
+RunUntil(function() return ns.S.queue ~= nil and ns.S.queue.plan.target == 25 end, 5)
 q = ns.S.queue
 check(q and q.plan.target == 25 and #q.steps == 4, "Plan builds a 4-item shopping list")
 check(q.steps[1].itemID == TEXTILES and q.steps[2].itemID == FABRICS and q.steps[2].qty == 2 and q.steps[2].budget == 10500
@@ -310,9 +345,11 @@ check(lastChat("Fill the crates") ~= nil, "reminds you to fill and hand in")
 
 print("== a crate sells out mid-list: its fill materials shrink")
 Listings(); Rescan()
+ns.S.queue = nil -- the previous list (also 25 Favor) is finished
 ns.PlanGoal(25)
+RunUntil(function() return ns.S.queue ~= nil and ns.S.queue.plan.target == 25 end, 5)
 q = ns.S.queue
-W.run(1)
+W.run(2)
 check(q.steps[1].status == "ready", "Textiles crate ready")
 W.ah.setItems(FABRICS, { { auctionID = 2001, buyout = 5000, quantity = 1 } }) -- the other Fabrics crates are gone
 press(CheapCratesBuyButton)
@@ -343,6 +380,7 @@ check(ns.S.queue == nil and W.overrides.MOUSEWHEELDOWN == nil, "Cancel drops the
 
 print("== presses respect the shared request gate")
 Listings(); Rescan()
+W.run(0.5) -- let the gate open after the scan's last read
 ns.BuyCombo(findCombo(ns.Combos(), FABRICS, HIDE))
 q = ns.S.queue
 W.run(0.3) -- the price check answered, but the gate (0.4 s) is still shut
@@ -363,6 +401,101 @@ check(q.steps[2].got == 0 and countCalls("ConfirmCommoditiesPurchase") == 0, "no
 press(CheapCratesBuyButton)
 W.run(1)
 check(q.finished and q.steps[2].got == 2, "the next press buys the hides")
+
+print("== quick scan with a short top list: Buy and Plan read the exact prices they need")
+ns.REFINE_TOP = 2
+Listings(); W.calls = {}; Rescan()
+check(DetailCalls() == 2, "top 2 only: 2 full reads (" .. DetailCalls() .. ")")
+check(b[SILVERLEAF].est and b[HIDE] and not b[HIDE].est, "Silverleaf left as an estimate, Cured Light Hide read")
+check(findCombo(ns.Combos(), HERBS, SILVERLEAF).est, "its row is marked ~")
+ns.UpdateUI(true)
+W.chat = {}
+ns.S.queue = nil -- the previous list is finished
+ns.BuyCombo(findCombo(ns.Combos(), HERBS, SILVERLEAF))
+check(ns.S.queue == nil and ns.S.scan and ns.S.scan.mode == "plan", "Buy first reads the estimated item")
+RunUntil(function() return ns.S.queue ~= nil end, 5)
+q = ns.S.queue
+check(q and q.steps[2].itemID == SILVERLEAF and q.steps[2].budget == 450, "then lists 20 Silverleaf at the exact 450, not the 400 floor")
+ns.CancelQueue()
+W.chat = {}
+ns.PlanGoal(40)
+check(lastChat("Reading exact prices for the plan") ~= nil, "Plan reads exact prices for what it would buy")
+RunUntil(function() return ns.S.queue ~= nil end, 15)
+q = ns.S.queue
+local stillEst = false
+for _, st in ipairs(q.steps) do
+	local bk = CheapCratesDB.book[st.itemID]
+	if bk.est and st.qty > 1 then stillEst = true end
+end
+check(not stillEst, "every multi-unit item in the plan was read in full")
+check(ns.PlanFavor(40, false).cost == q.plan.cost, "the list matches a plan made from the exact prices (" .. q.plan.cost .. ")")
+ns.CancelQueue()
+ns.REFINE_TOP = 10
+
+print("== Plan pressed while a scan runs waits for it")
+Listings()
+click(CheapCratesScanButton)
+W.run(0.3)
+W.chat = {}
+ns.PlanGoal(25)
+check(ns.S.queue == nil and lastChat("as soon as the scan finishes") ~= nil, "waits for the scan")
+RunUntil(function() return ns.S.queue ~= nil end, 20)
+check(ns.S.queue and ns.S.queue.plan.target == 25 and ns.S.queue.plan.cost == 18500, "then plans 25 Favor for 18500")
+ns.CancelQueue()
+
+print("== In bags tab")
+Listings(); Rescan()
+W.bagCount = { [HERBS] = 1, [SILVERLEAF] = 45, [BRIAR] = 10, [MAGE] = 4, [FABRICS] = 2, [LINEN] = 60, [EHERBS] = 1, [FADE] = 10 }
+local rows, sum = ns.BagFill()
+local function bagRow(id) for _, r in ipairs(rows) do if r.crate.id == id then return r end end end
+local hr = bagRow(HERBS)
+check(hr and hr.crates == 1 and hr.bundles == 3 and hr.can == 1 and hr.favor == 5 and hr.spareBundles == 2,
+	"Apprentice Herbs: 1 crate, 3 bundles (2x Silverleaf, 1x Briarthorn) -> can fill 1, 2 bundles need a crate")
+local mage
+for _, part in ipairs(hr.parts) do if part.fill.item == MAGE then mage = part end end
+check(mage and mage.have == 4 and mage.n == 0, "4/10 Mageroyal shown as not yet a bundle")
+local fr = bagRow(FABRICS)
+check(fr and fr.crates == 2 and fr.bundles == 0 and fr.can == 0 and fr.spareCrates == 2, "Apprentice Fabrics: 2 crates, no bundle")
+local tr = bagRow(TEXTILES)
+check(tr and tr.bundles == 0 and tr.parts[1].blocked, "60 Linen Cloth is no bundle: 40 do not fit in one stack of 20")
+local er = bagRow(EHERBS)
+check(er and er.levelBlocked and er.can == 0, "level 20 crate: cannot fill it at level 15")
+check(sum.can == 1 and sum.favor == 5 and sum.spareBundles == 2 and sum.spareCrates == 2, "total: 1 crate ready to fill (5 Favor)")
+check(bagRow(JHERBS) == nil, "crates with nothing in bags are not listed")
+CheapCratesDB.view = "crates"
+ns.UpdateUI(true)
+local bagsTab
+for _, f in ipairs(W.frames) do if f._parent == CheapCratesFrame and f._kind == "Button" and type(f._text) == "string" and f._text:find("^In bags") then bagsTab = f end end
+check(bagsTab and bagsTab:GetText() == "In bags (1)", "tab shows how many crates you can fill")
+click(bagsTab)
+check(CheapCratesDB.view == "bags", "tab opens the bags view")
+check(ns.rows[1].data.kind == "text" and ns.rows[1].data.text:find("Ready to fill now") and ns.rows[1].data.text:find("1 crate"), "summary line: ready to fill now")
+check(ns.rows[2].data.kind == "bag" and ns.rows[2].data.bag.crate.id == HERBS, "crates you can fill listed first")
+check(ns.rows[2].cols.total:GetText():find("1") and ns.rows[2].cols.per:GetText() == "+2 crates", "row shows can fill 1, missing +2 crates")
+-- Buy on that row: the 2 crates the spare bundles need, nothing else
+click(ns.rows[2].buy)
+RunUntil(function() return ns.S.queue ~= nil end, 5)
+q = ns.S.queue
+check(q and #q.steps == 1 and q.steps[1].itemID == HERBS and q.steps[1].qty == 2 and q.steps[1].budget == 10000,
+	"Buy gets just the 2 missing crates (4000 + 6000)")
+ns.CancelQueue()
+CheapCratesDB.view = "bags"; ns.UpdateUI(true)
+local fabRowUI
+for i = 1, 14 do local d = ns.rows[i].data; if d and d.kind == "bag" and d.bag.crate.id == FABRICS then fabRowUI = ns.rows[i] end end
+click(fabRowUI.buy)
+RunUntil(function() return ns.S.queue ~= nil end, 5)
+q = ns.S.queue
+check(q and #q.steps == 1 and q.steps[1].itemID == HIDE and q.steps[1].qty == 4 and q.steps[1].budget == 5000,
+	"2 empty Fabrics crates: Buy gets the cheapest bundle for each (4 Cured Light Hide)")
+ns.CancelQueue()
+local erUI
+CheapCratesDB.view = "bags"; ns.UpdateUI(true)
+for i = 1, 14 do local d = ns.rows[i].data; if d and d.kind == "bag" and d.bag.crate.id == EHERBS then erUI = ns.rows[i] end end
+check(erUI and not erUI.buy:IsEnabled(), "nothing to buy for a crate above your level")
+W.bagCount = {}
+ns.UpdateUI(true)
+check(bagsTab:GetText() == "In bags" and ns.rows[1].data.text:find("No Waylaid Crates"), "empty bags: says so")
+CheapCratesDB.view = "crates"
 
 print("== settings and commands")
 W.chat = {}
@@ -388,12 +521,13 @@ W.chat = {}
 W.slash("help")
 check(#W.chat > 5, "/crates help")
 W.slash("goal 10")
+RunUntil(function() return ns.S.queue ~= nil end, 5)
 check(ns.S.queue and ns.S.queue.plan.target == 10, "/crates goal plans from chat")
 ns.CancelQueue()
 
 print("== scan stops when the auction house closes")
 click(CheapCratesScanButton)
-W.run(2)
+W.run(0.5)
 W.fire("AUCTION_HOUSE_CLOSED")
 check(ns.S.scan == nil, "scan stopped")
 check(not W.throttleViolations, "throttle respected throughout")
