@@ -40,7 +40,8 @@ ns.DEFAULTS = {
 	goal = nil,
 	history = {},
 	pos = nil,
-	autoShow = true,     -- open next to the auction house
+	autoShow = false,    -- open by itself when the auction house opens (/crates autoshow on)
+	minimap = {},        -- minimap button: { hide = bool, angle = degrees }
 	view = "crates",
 }
 

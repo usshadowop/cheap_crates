@@ -28,7 +28,8 @@ W.bindings = {}
 function GetBindingKey(action) for k, a in pairs(W.bindings) do if a == action then return k end end end
 function SetBinding(key, action) if action then W.bindings[key] = action else W.bindings[key] = nil end return true end
 function GetBuildInfo() return "1.60.1", "70862", "Nov 7 2026", 16001 end
-C_AddOns = { GetAddOnMetadata = function() return "0.1.0" end }
+W.meta = {}
+C_AddOns = { GetAddOnMetadata = function(_, field) return W.meta[field] or "0.1.0" end }
 function SaveBindings() end
 function GetCurrentBindingSet() return 1 end
 SOUNDKIT = { ALARM_CLOCK_WARNING_3 = 12889, RAID_WARNING = 8959 }
@@ -69,6 +70,8 @@ local function NewRegion()
 		__index = function(t, k)
 			if k == "SetText" then return function(self, s) self._text = s end end
 			if k == "GetText" then return function(self) return self._text end end
+			if k == "SetTexture" then return function(self, t) self._texture = t end end
+			if k == "GetTexture" then return function(self) return self._texture end end
 			return function() end
 		end })
 end
@@ -82,9 +85,18 @@ function Frame:SetScript(h, fn) self._scripts[h] = fn end
 function Frame:GetScript(h) return self._scripts[h] end
 function Frame:RegisterEvent(e) self._events[e] = true end
 function Frame:UnregisterEvent(e) self._events[e] = nil end
-function Frame:Show() self._shown = true end
-function Frame:Hide() self._shown = false end
-function Frame:SetShown(b) self._shown = b end
+-- like the client: OnShow / OnHide run when the frame actually changes state
+function Frame:Show()
+	if self._shown then return end
+	self._shown = true
+	if self._scripts.OnShow then self._scripts.OnShow(self) end
+end
+function Frame:Hide()
+	if not self._shown then return end
+	self._shown = false
+	if self._scripts.OnHide then self._scripts.OnHide(self) end
+end
+function Frame:SetShown(b) if b then self:Show() else self:Hide() end end
 function Frame:IsShown() return self._shown end
 function Frame:CreateTexture() return NewRegion() end
 function Frame:CreateFontString() return NewRegion() end
@@ -100,9 +112,17 @@ function Frame:GetValue() return self._value or 0 end
 function Frame:GetThumbTexture() return nil end
 function Frame:GetChecked() return self._checked end
 function Frame:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
+function Frame:SetPoint(...) self._point = { ... } end
+function Frame:GetWidth() return self._w or 140 end
+function Frame:GetHeight() return self._h or 140 end
+function Frame:GetCenter() return self._cx or 500, self._cy or 500 end
+function Frame:GetEffectiveScale() return 1 end
 function Frame:GetParent() return self._parent end
 function Frame:HasFocus() return false end
 UIParent = CreateFrame("Frame", "UIParent")
+Minimap = CreateFrame("Frame", "Minimap", UIParent)
+W.cursorX, W.cursorY = 0, 0
+function GetCursorPosition() return W.cursorX, W.cursorY end
 
 function W.fire(event, ...)
 	for _, f in ipairs(W.frames) do

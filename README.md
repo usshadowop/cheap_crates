@@ -33,7 +33,11 @@ which was checked against Blizzard's UI source for this build.
 
 ## Use
 
-Go to an auctioneer. The window opens next to the auction house (`/crates` opens it anywhere).
+Click the crate button on the minimap (the same icon as in the addon list) or type `/crates`.
+The window opens next to the auction house when that is open. It does not open by itself
+(`/crates autoshow on` if you want it to). Right-click the minimap button to jump straight to
+the In bags tab. Drag the button to move it around the minimap. Its tooltip shows your
+Merchant's Favor, how many crates your bags can fill, and any shopping list in progress.
 
 1. Press **Scan**. It prices 126 items: the 30 crates plus every fill material. That takes a
    few seconds (details under "Why the scan is quick" below). Prices marked `~` are floors:
@@ -95,9 +99,11 @@ right before its purchase anyway.
 - **Sold out.** If someone buys the auction you were about to buy, the addon finds the next
   one within your tolerance. If fewer units are listed than you need, it asks first.
 - **Scroll = BUY** (on by default) works only while a shopping list is active at the auction
-  house. Wheel ticks over the game world or this window buy the next item. Scrolling lists and
-  chat still scroll. The wheel goes back to normal when the list is done or the auction house
-  closes.
+  house and the Cheap Crates window is open. Closing the window gives the wheel straight back.
+  If you open the auction house with a list still waiting, you get a chat reminder rather than
+  a window that buys on a stray scroll. Wheel ticks over the game world or this window buy the
+  next item. Scrolling lists and chat still scroll. The wheel goes back to normal when the list
+  is done, the window closes, or the auction house closes.
 
 When the list is done, fill each crate: use the crate with the bundle in your bags. Hand the
 sealed crates in for Merchant's Favor. Alliance: Marcy Baker, Azeroth Commerce Authority, Three
@@ -135,6 +141,8 @@ over those curves then finds how many of each crate reach the goal for the least
 | `/crates levels on\|off` | leave out crates above your level (default on) |
 | `/crates stackcheck on\|off` | leave out bundles bigger than one stack (default on) |
 | `/crates key <KEY>` | bind the BUY key |
+| `/crates minimap on\|off` | show or hide the minimap button (`/crates minimap` toggles) |
+| `/crates autoshow on\|off` | open the window when the auction house opens (default off) |
 | `/crates reset` | put the window back next to the auction house |
 
 ## Crate data

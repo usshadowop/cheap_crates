@@ -8,6 +8,10 @@ for line in io.lines(ADDON .. "/CheapCrates.toc") do
 	line = line:gsub("\r", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
+for line in io.lines(ADDON .. "/CheapCrates.toc") do
+	local k, v = line:gsub("\r", ""):match("^## (%w+): (.+)$")
+	if k then W.meta[k] = v end -- what C_AddOns.GetAddOnMetadata returns
+end
 for _, f in ipairs(files) do assert(loadfile(ADDON .. "/" .. f))("CheapCrates", ns) end
 
 local failures = 0
@@ -85,9 +89,11 @@ local function RunUntil(cond, seconds)
 end
 
 print("== load")
+CheapCratesDB = { autoShow = true, useBags = true } -- saved by 0.2.0, which opened with the auction house
 W.fire("ADDON_LOADED", "CheapCrates")
 W.fire("PLAYER_LOGIN")
 check(CheapCratesDB and CheapCratesDB.useBags == true and CheapCratesDB.tolerance == 5 and CheapCratesDB.wheel == true, "saved variables initialised with defaults")
+check(CheapCratesDB.autoShow == false and CheapCratesDB.settingsVersion == 2, "older settings migrated: no longer opens with the auction house")
 check(#ns.CRATES == 30, "30 crates in the database")
 local fills = 0
 for _, c in ipairs(ns.CRATES) do fills = fills + #c.fills end
@@ -102,8 +108,11 @@ check(lastChat("Open the auction house first") ~= nil and ns.S.scan == nil, "sca
 
 print("== scan")
 Listings()
+ns.Hide()
 W.fire("AUCTION_HOUSE_SHOW")
-check(CheapCratesFrame:IsShown(), "window shown with the auction house")
+check(not CheapCratesFrame:IsShown(), "opening the auction house does not open the window")
+click(CheapCratesMinimapButton)
+check(CheapCratesFrame:IsShown(), "the minimap button opens it")
 W.calls = {}
 local took = Rescan()
 check(ns.S.scan == nil and CheapCratesDB.lastScan ~= nil, "quick scan finished")
@@ -496,6 +505,57 @@ W.bagCount = {}
 ns.UpdateUI(true)
 check(bagsTab:GetText() == "In bags" and ns.rows[1].data.text:find("No Waylaid Crates"), "empty bags: says so")
 CheapCratesDB.view = "crates"
+
+print("== minimap button")
+local mb = CheapCratesMinimapButton
+check(mb:IsShown() and mb:GetParent() == Minimap, "button sits on the minimap")
+check(mb.icon:GetTexture() == "Interface\\Icons\\INV_Crate_02" and mb.icon:GetTexture() == W.meta.IconTexture,
+	"uses the addon-list icon from the .toc (" .. tostring(mb.icon:GetTexture()) .. ")")
+local p = mb._point
+check(p and p[1] == "CENTER" and p[2] == Minimap and math.abs(p[4] - math.cos(math.rad(210)) * 75) < 0.01 and math.abs(p[5] - math.sin(math.rad(210)) * 75) < 0.01,
+	"placed on the minimap's edge (lower left by default)")
+ns.Hide()
+click(mb)
+check(CheapCratesFrame:IsShown(), "click opens the window")
+click(mb)
+check(not CheapCratesFrame:IsShown(), "click again closes it")
+mb:GetScript("OnClick")(mb, "RightButton")
+check(CheapCratesFrame:IsShown() and CheapCratesDB.view == "bags", "right-click opens the In bags tab")
+mb:GetScript("OnClick")(mb, "RightButton")
+check(not CheapCratesFrame:IsShown(), "right-click again closes it")
+mb:GetScript("OnEnter")(mb)
+mb:GetScript("OnLeave")(mb)
+check(true, "tooltip draws")
+-- drag it to the right-hand side of the minimap (centre at 500,500)
+mb:GetScript("OnDragStart")(mb)
+W.cursorX, W.cursorY = 600, 500
+mb:GetScript("OnUpdate")(mb, 0.016)
+mb:GetScript("OnDragStop")(mb)
+p = mb._point
+check(CheapCratesDB.minimap.angle == 0 and math.abs(p[4] - 75) < 0.01 and math.abs(p[5]) < 0.01 and mb:GetScript("OnUpdate") == nil,
+	"dragging moves it around the edge and remembers where")
+W.slash("minimap off")
+check(not mb:IsShown() and CheapCratesDB.minimap.hide, "/crates minimap off hides it")
+W.slash("minimap")
+check(mb:IsShown() and not CheapCratesDB.minimap.hide, "/crates minimap shows it again")
+W.slash("autoshow on")
+ns.Hide(); W.fire("AUCTION_HOUSE_CLOSED"); W.fire("AUCTION_HOUSE_SHOW")
+check(CheapCratesFrame:IsShown(), "/crates autoshow on: opens with the auction house again")
+W.slash("autoshow off")
+
+print("== a hidden window never buys on a scroll")
+Listings(); Rescan(); W.run(0.5)
+ns.BuyCombo(findCombo(ns.Combos(), FABRICS, HIDE))
+W.run(1)
+check(W.overrides.MOUSEWHEELDOWN == "CheapCratesWheelButton", "window open: the wheel buys")
+ns.Hide()
+check(W.overrides.MOUSEWHEELDOWN == nil, "window closed: the wheel is released")
+W.chat = {}
+W.fire("AUCTION_HOUSE_CLOSED"); W.fire("AUCTION_HOUSE_SHOW")
+check(not CheapCratesFrame:IsShown() and lastChat("shopping list has 2 items left") ~= nil, "at the auction house with a list waiting: a reminder, not the window")
+click(mb)
+check(W.overrides.MOUSEWHEELDOWN == "CheapCratesWheelButton", "opening the window gives the wheel back to BUY")
+ns.CancelQueue()
 
 print("== settings and commands")
 W.chat = {}

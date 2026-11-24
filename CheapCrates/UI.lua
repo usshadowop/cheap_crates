@@ -422,8 +422,9 @@ wheelBtn:SetScript("OnClick", function() ns.Press("wheel") end)
 
 local bindOwner = CreateFrame("Frame")
 
+-- only while the window is open: a hidden shopping list never buys on a stray scroll
 function ns.WheelActive()
-	return ns.db and ns.db.wheel and S.ahOpen and S.queue ~= nil and not S.queue.finished
+	return ns.db and ns.db.wheel and S.ahOpen and frame:IsShown() and S.queue ~= nil and not S.queue.finished
 end
 
 function ns.ApplyWheelBinding()
@@ -717,7 +718,8 @@ function ns.DrawIfDirty()
 	if dirty and frame:IsShown() and GetTime() - lastDraw > 0.15 then Draw() end
 end
 
-frame:SetScript("OnShow", function() ns.followedIdx = nil; Draw() end)
+frame:SetScript("OnShow", function() ns.followedIdx = nil; Draw(); ns.ApplyWheelBinding() end)
+frame:SetScript("OnHide", function() ns.ApplyWheelBinding() end)
 
 function ns.Show()
 	frame:ClearAllPoints()

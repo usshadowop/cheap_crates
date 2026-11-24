@@ -159,7 +159,13 @@ function handlers.ADDON_LOADED(name)
 			if type(v) == "table" then db[k] = {} else db[k] = v end
 		end
 	end
+	-- settings migrations
+	if (db.settingsVersion or 1) < 2 then
+		db.autoShow = false -- the window no longer opens with the auction house (minimap button instead)
+		db.settingsVersion = 2
+	end
 	ns.db = db
+	ns.MinimapInit()
 	ns.UpdateUI(true)
 end
 
@@ -178,7 +184,12 @@ function handlers.AUCTION_HOUSE_SHOW()
 		local st = ns.CurrentStep()
 		if st and st.status ~= "done" then st.status = "pending" end
 	end
-	if ns.db.autoShow then ns.Show() end
+	if ns.db.autoShow then
+		ns.Show()
+	elseif S.queue and not S.queue.finished and not ns.frame:IsShown() then
+		local left = #S.queue.steps - S.queue.idx + 1
+		ns.Print("Your shopping list has %d item%s left: click the minimap button (or /crates) to carry on.", left, left == 1 and "" or "s")
+	end
 	ns.ApplyWheelBinding()
 	ns.UpdateUI(true)
 end
@@ -275,6 +286,8 @@ local function Help()
 	ns.Print("  /crates levels on|off  leave out crates above your level (now %s)", ns.db.respectLevel and "on" or "off")
 	ns.Print("  /crates stackcheck on|off  leave out bundles bigger than one stack (now %s)", ns.db.stackCheck and "on" or "off")
 	ns.Print("  /crates key <KEY>  bind the BUY key, e.g. /crates key F10")
+	ns.Print("  /crates minimap on|off  show or hide the minimap button")
+	ns.Print("  /crates autoshow on|off  open the window when the auction house opens (now %s)", ns.db.autoShow and "on" or "off")
 	ns.Print("  /crates reset  put the window back next to the auction house")
 end
 
@@ -375,6 +388,11 @@ SlashCmdList.CHEAPCRATES = function(msg)
 		else
 			ns.Print("Could not bind %s.", key)
 		end
+	elseif cmd == "minimap" then
+		ns.SetMinimapShown(rest == "" and ns.db.minimap.hide or OnOff(rest:lower()))
+	elseif cmd == "autoshow" then
+		db.autoShow = OnOff(rest:lower())
+		ns.Print("The window %s when the auction house opens.", db.autoShow and "opens by itself" or "stays closed")
 	elseif cmd == "reset" then
 		db.pos = nil
 		ns.Show()
