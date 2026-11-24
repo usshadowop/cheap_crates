@@ -29,8 +29,8 @@ local COLS = {
 }
 local HEADERS = {
 	crates = { name = "Crate", fill = "Fill with (any one)", crate = "Crate", fillc = "Fill", total = "Total", favor = "Favor", per = "Per Favor" },
-	shop = { name = "Item", fill = "Buy", crate = "In bags", fillc = "", total = "Planned", favor = "Status", per = "Paid" },
-	bags = { name = "Crate", fill = "Fill materials in bags", crate = "Crates", fillc = "Bundles", total = "Can fill", favor = "Favor", per = "Missing" },
+	shop = { name = "Item", fill = "Buy", crate = "Owned", fillc = "", total = "Planned", favor = "Status", per = "Paid" },
+	bags = { name = "Crate", fill = "Fill materials (bags + bank)", crate = "Crates", fillc = "Bundles", total = "Can fill", favor = "Favor", per = "Missing" },
 }
 local SORTABLE = { name = "name", total = "total", favor = "favor", per = "per" }
 
@@ -52,6 +52,14 @@ local function Age(t)
 	return math.floor(d / 86400 + 0.5) .. "d"
 end
 ns.Age = Age
+
+-- "45 in bags, 12 in bank"
+local function OwnedText(bags, bank)
+	if bags > 0 and bank > 0 then return ("%d in bags, %d in bank"):format(bags, bank) end
+	if bank > 0 then return ("%d in bank"):format(bank) end
+	return ("%d in bags"):format(bags)
+end
+ns.OwnedText = OwnedText
 
 -------------------------------------------------------------------------------
 -- Frame
@@ -123,11 +131,12 @@ local function Check(name, label, x, tip, onClick)
 	fs:SetText(label)
 	cb:SetScript("OnClick", function(self) onClick(self:GetChecked() and true or false) end)
 	Tip(cb, tip)
+	cb.label = fs
 	return cb
 end
 
-local bagsCheck = Check("CheapCratesBagsCheck", "Use bag items", 352,
-	"Count crates and fill materials already in your bags. What you carry is used first and costs nothing, so a bundle you already hold makes that crate only cost the crate (and the planner buys only what you are missing).",
+local bagsCheck = Check("CheapCratesBagsCheck", "Use bags + bank", 352,
+	"Count crates and fill materials you already own, in your bags and your bank. What you own is used first and costs nothing, so a bundle you already hold makes that crate only cost the crate, and the planner buys only what you are missing (the shopping list says what to take out of the bank). /crates bank off counts your bags only.",
 	function(on) ns.db.useBags = on; ns.UpdateUI(true) end)
 local bestCheck = Check("CheapCratesBestCheck", "Best fill only", 472,
 	"Show only the cheapest bundle for each crate instead of every crate + bundle combination.",
@@ -148,8 +157,8 @@ local function Tab(text, view, x, width)
 end
 local cratesTab = Tab("Crates", "crates", 10, 80)
 local shopTab = Tab("Shopping list", "shop", 92, 116)
-local bagsTab = Tab("In bags", "bags", 210, 96)
-Tip(bagsTab, "How many crates you can fill right now with the crates and fill materials in your bags.")
+local bagsTab = Tab("Bags & bank", "bags", 210, 112)
+Tip(bagsTab, "How many crates you can fill with the crates and fill materials in your bags and bank (and how many right now: filling needs the items in your bags).")
 
 local favorText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 favorText:SetPoint("TOPRIGHT", -14, -62)
@@ -157,7 +166,7 @@ favorText:SetJustifyH("RIGHT")
 
 local viewHint = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 viewHint:SetPoint("LEFT", bagsTab, "RIGHT", 10, 0)
-viewHint:SetWidth(230)
+viewHint:SetWidth(214)
 viewHint:SetJustifyH("LEFT")
 
 -- column headers -----------------------------------------------------------------------------
@@ -200,11 +209,19 @@ local function RowTooltip(row)
 		local cl = d.combo.crateLadder
 		local b = ns.db.book[c.id]
 		local crateLine
-		if cl.have > 0 then crateLine = ("%d in your bags"):format(cl.have)
+		local cBags, cBank = ns.ItemCounts(c.id)
+		if cl.have > 0 then crateLine = OwnedText(cBags, cBank)
 		elseif d.combo.crateCost then crateLine = ns.CoinsFull(d.combo.crateCost) .. ((b and b.listed) and ("  (%d listed)"):format(b.listed) or "")
 		elseif d.combo.crateMissing == "unscanned" then crateLine = "not scanned"
 		else crateLine = "|cffff4444none listed|r" end
 		GameTooltip:AddDoubleLine("Crate", crateLine, 0.8, 0.8, 0.8, 1, 1, 1)
+		if d.combo.ownedBundles > 0 then
+			GameTooltip:AddDoubleLine("Your materials fill", ("%d of these (%d from your bags alone)"):format(d.combo.ownedBundles, d.combo.bagBundles),
+				0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		end
+		if cBags + cBank > 0 and cl.have == 0 then
+			GameTooltip:AddDoubleLine("Crates you own", OwnedText(cBags, cBank), 0.8, 0.8, 0.8, 1, 1, 1)
+		end
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("Fill with any one of:", 1, 0.82, 0)
 		for _, r in ipairs(ns.lastCombos or {}) do
@@ -212,12 +229,13 @@ local function RowTooltip(row)
 				local fb = ns.db.book[r.fill.item]
 				local left = ("%d %s"):format(r.fill.qty, ns.ItemName(r.fill.item))
 				local right
-				if r.fillLadder.have >= r.fill.qty then right = "in bags"
+				if r.fillLadder.have >= r.fill.qty then right = "|cff00ff00owned|r"
 				elseif r.fillCost then right = ns.CoinsFull(r.fillCost)
 				elseif r.fillMissing == "unscanned" then right = "not scanned"
 				elseif r.fillMissing == "short" then right = ("only %d listed"):format(fb and fb.listed or 0)
 				else right = "none listed" end
-				if r.fillLadder.have > 0 and r.fillLadder.have < r.fill.qty then left = left .. (" (%d in bags)"):format(r.fillLadder.have) end
+				local fBags, fBank = ns.ItemCounts(r.fill.item)
+				if fBags + fBank > 0 then left = left .. "  |cffaaaaaa(" .. OwnedText(fBags, fBank) .. ")|r" end
 				if r.stackBlocked then left = left .. (" |cffff4444stacks to %d|r"):format(r.stack or 0) end
 				local cr, cg, cb = 1, 1, 1
 				if r == d.combo then cr, cg, cb = 0.3, 1, 0.3 end
@@ -240,7 +258,10 @@ local function RowTooltip(row)
 		local st = d.step
 		GameTooltip:AddLine(ns.ItemName(st.itemID))
 		GameTooltip:AddDoubleLine("To buy", tostring(st.qty), 0.8, 0.8, 0.8, 1, 1, 1)
-		if (st.have or 0) > 0 then GameTooltip:AddDoubleLine("Already in bags", tostring(st.have), 0.8, 0.8, 0.8, 1, 1, 1) end
+		if (st.have or 0) > 0 then
+			local sb, sk = ns.ItemCounts(st.itemID)
+			GameTooltip:AddDoubleLine("Already own", ("%d  (%s)"):format(st.have, OwnedText(sb, sk)), 0.8, 0.8, 0.8, 1, 1, 1)
+		end
 		GameTooltip:AddDoubleLine("Planned", ns.CoinsFull(st.planned), 0.8, 0.8, 0.8, 1, 1, 1)
 		if st.budget ~= st.planned then GameTooltip:AddDoubleLine("Accepted", ns.CoinsFull(st.budget), 0.8, 0.8, 0.8, 1, 1, 1) end
 		if st.got > 0 then GameTooltip:AddDoubleLine("Bought", ("%d for %s"):format(st.got, ns.CoinsFull(st.paid)), 0.8, 0.8, 0.8, 1, 1, 1) end
@@ -256,19 +277,21 @@ local function RowTooltip(row)
 		local b = d.bag
 		local c = b.crate
 		GameTooltip:AddLine(c.name)
-		GameTooltip:AddDoubleLine("Empty crates in bags", tostring(b.crates), 0.8, 0.8, 0.8, 1, 1, 1)
+		GameTooltip:AddDoubleLine("Empty crates", b.crates > 0 and OwnedText(b.crates - b.cratesBank, b.cratesBank) or "none", 0.8, 0.8, 0.8, 1, 1, 1)
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("Fill materials in bags:", 1, 0.82, 0)
+		GameTooltip:AddLine("Fill materials:", 1, 0.82, 0)
 		if #b.parts == 0 then GameTooltip:AddLine("none", 0.6, 0.6, 0.6) end
 		for _, p in ipairs(b.parts) do
 			local right
 			if p.blocked then right = "|cffff4444bundle is bigger than a stack|r"
 			elseif p.n > 0 then right = ("%d bundle%s"):format(p.n, p.n == 1 and "" or "s") .. ((p.have % p.fill.qty > 0) and (" + %d spare"):format(p.have % p.fill.qty) or "")
 			else right = ("%d more for a bundle"):format(p.fill.qty - p.have) end
-			GameTooltip:AddDoubleLine(("%d %s (bundle of %d)"):format(p.have, ns.ItemName(p.fill.item), p.fill.qty), right, 1, 1, 1, 1, 1, 1)
+			GameTooltip:AddDoubleLine(("%d %s (bundle of %d)  |cffaaaaaa%s|r"):format(p.have, ns.ItemName(p.fill.item), p.fill.qty, OwnedText(p.bags, p.bank)), right, 1, 1, 1, 1, 1, 1)
 		end
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddDoubleLine("Can fill now", ("%d (%d Favor)"):format(b.can, b.favor), 0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		GameTooltip:AddDoubleLine("Can fill (bags + bank)", ("%d (%d Favor)"):format(b.can, b.favor), 0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		GameTooltip:AddDoubleLine("Right now, from your bags", tostring(b.canNow), 0.8, 0.8, 0.8, 1, 1, 1)
+		if b.can > b.canNow then GameTooltip:AddLine("Take the rest out of your bank to fill them: filling needs the items in your bags.", 0.4, 0.8, 1, true) end
 		if b.levelBlocked then GameTooltip:AddLine(("Needs level %d."):format(c.level), 1, 0.4, 0.4) end
 		if b.spareBundles > 0 then
 			GameTooltip:AddLine(("%d bundle%s without a crate: Buy gets the crate%s."):format(b.spareBundles, b.spareBundles == 1 and "" or "s", b.spareBundles == 1 and "" or "s"), 0.7, 0.7, 0.7, true)
@@ -473,9 +496,13 @@ local function SortCombos(list)
 	end)
 end
 
-local function CostCell(cost, ladder, need, missing)
+local function CostCell(cost, ladder, need, missing, itemID)
+	-- covered by what you own: say where it is
+	if ladder.have >= need then
+		if ns.BagCount(itemID) >= need then return "|cff00ff00bags|r" end
+		return "|cff66ccffbank|r"
+	end
 	-- a key-pass price is exact for one unit and a floor for more
-	if ladder.have >= need then return "|cff00ff00bags|r" end
 	if cost then
 		local s = ns.Coins(cost)
 		if ladder.est and need - ladder.have > 1 then s = "~" .. s end
@@ -501,14 +528,15 @@ local function BuildData()
 		local rows, sum = ns.BagFill()
 		local text
 		if #rows == 0 then
-			text = "|cff888888No Waylaid Crates or fill materials in your bags.|r"
+			text = "|cff888888No Waylaid Crates or fill materials in your bags or bank.|r"
 		else
-			text = ("|cffffd100Ready to fill now:|r |cff00ff00%d crate%s|r (%d Favor)"):format(sum.can, sum.can == 1 and "" or "s", sum.favor)
+			text = ("|cffffd100Can fill:|r |cff00ff00%d crate%s|r (%d Favor), %d from your bags right now"):format(sum.can, sum.can == 1 and "" or "s", sum.favor, sum.canNow)
 			if sum.spareBundles > 0 then text = text .. ("   |cffaaaaaa%d bundle%s need a crate|r"):format(sum.spareBundles, sum.spareBundles == 1 and "" or "s") end
 			if sum.spareCrates > 0 then text = text .. ("   |cffaaaaaa%d crate%s need a bundle|r"):format(sum.spareCrates, sum.spareCrates == 1 and "" or "s") end
 		end
 		data[1] = { kind = "text", text = text }
 		for _, r in ipairs(rows) do data[#data + 1] = { kind = "bag", bag = r } end
+		if #rows > 0 then data[#data + 1] = { kind = "text", text = "|cff66ccff* some in your bank|r  |cff888888(take them out to fill: filling needs the items in your bags)|r" } end
 	else
 		local q = S.queue
 		if not q then
@@ -517,6 +545,12 @@ local function BuildData()
 			if q.plan and #q.plan.groups > 0 then
 				data[#data + 1] = { kind = "text", text = ("|cffffd100Crates to fill|r  (%d crate%s, %d Favor)"):format(#q.plan.units, #q.plan.units == 1 and "" or "s", q.plan.favor) }
 				for _, g in ipairs(q.plan.groups) do data[#data + 1] = { kind = "group", group = g } end
+			end
+			if q.plan and q.plan.fromBank and #q.plan.fromBank > 0 then
+				data[#data + 1] = { kind = "text", text = "|cffffd100Take from your bank|r  (already yours, so not bought)" }
+				for _, f in ipairs(q.plan.fromBank) do
+					data[#data + 1] = { kind = "text", text = ("    |cff66ccff%d x %s|r"):format(f.qty, ns.ItemName(f.itemID)) }
+				end
 			end
 			data[#data + 1] = { kind = "text", text = #q.steps > 0 and "|cffffd100To buy|r  (one BUY press each)" or "|cff00ff00Nothing to buy: you already have everything in your bags.|r" }
 			for i, st in ipairs(q.steps) do data[#data + 1] = { kind = "step", step = st, index = i, current = (i == q.idx and not q.finished) } end
@@ -540,12 +574,13 @@ local function DrawRow(row, d)
 	if d.kind == "combo" then
 		local r = d.combo
 		local nameColor = r.levelBlocked and "|cff888888" or (r.cheapest and "|cff00ff00" or "|cffffffff")
-		c.name:SetText(nameColor .. r.crate.short .. "|r")
+		-- (N): how many of this crate the fill materials in your bags and bank can fill
+		c.name:SetText(nameColor .. r.crate.short .. "|r" .. (r.ownedBundles > 0 and (" |cff00ff00(%d)|r"):format(r.ownedBundles) or ""))
 		local fillName = ("%d %s"):format(r.fill.qty, ns.ItemName(r.fill.item))
 		if r.stackBlocked then fillName = "|cffff4444" .. fillName .. "|r" end
 		c.fill:SetText(fillName)
-		c.crate:SetText(CostCell(r.crateCost, r.crateLadder, 1, r.crateMissing))
-		c.fillc:SetText(CostCell(r.fillCost, r.fillLadder, r.fill.qty, r.fillMissing))
+		c.crate:SetText(CostCell(r.crateCost, r.crateLadder, 1, r.crateMissing, r.crate.id))
+		c.fillc:SetText(CostCell(r.fillCost, r.fillLadder, r.fill.qty, r.fillMissing, r.fill.item))
 		c.total:SetText(r.total and ((r.est and "~" or "") .. ns.Coins(r.total)) or "-")
 		c.favor:SetText(tostring(r.favor) .. (r.favorEst and "|cff888888*|r" or ""))
 		c.per:SetText(r.per and ns.Coins(r.per) or "-")
@@ -568,12 +603,14 @@ local function DrawRow(row, d)
 		for _, p in ipairs(b.parts) do
 			local name = ns.ItemName(p.fill.item)
 			if p.blocked then parts[#parts + 1] = "|cffff4444" .. name .. "|r"
-			elseif p.n > 0 then parts[#parts + 1] = ("%dx %s"):format(p.n, name)
+			elseif p.n > 0 then
+				local fromBank = p.n - p.nBags
+				parts[#parts + 1] = ("%dx %s"):format(p.n, name) .. (fromBank > 0 and (" |cff66ccff(%d bank)|r"):format(fromBank) or "")
 			else parts[#parts + 1] = ("|cff888888%d/%d %s|r"):format(p.have, p.fill.qty, name) end
 		end
 		c.fill:SetText(#parts > 0 and table.concat(parts, ", ") or "|cff888888none|r")
-		c.crate:SetText(tostring(b.crates))
-		c.fillc:SetText(tostring(b.bundles))
+		c.crate:SetText(tostring(b.crates) .. (b.cratesBank > 0 and "|cff66ccff*|r" or ""))
+		c.fillc:SetText(tostring(b.bundles) .. (b.bundlesBank > 0 and "|cff66ccff*|r" or ""))
 		c.total:SetText(b.can > 0 and ("|cff00ff00%d|r"):format(b.can) or "0")
 		c.favor:SetText(b.favor > 0 and tostring(b.favor) or "")
 		if b.spareBundles > 0 then
@@ -615,7 +652,8 @@ local function Draw()
 	shopTab:SetEnabled(view ~= "shop")
 	bagsTab:SetEnabled(view ~= "bags")
 	local _, bagSum = ns.BagFill()
-	bagsTab:SetText(bagSum.can > 0 and ("In bags (%d)"):format(bagSum.can) or "In bags")
+	bagsTab:SetText(bagSum.can > 0 and ("Bags & bank (%d)"):format(bagSum.can) or "Bags & bank")
+	bagsCheck.label:SetText(db.useBank == false and "Use bag items" or "Use bags + bank")
 	local q = S.queue
 	shopTab:SetText((q and not q.finished) and ("Shopping list (%d)"):format(#q.steps - q.idx + 1) or "Shopping list")
 

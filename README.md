@@ -7,10 +7,13 @@ Finds the cheapest way to earn **Merchant's Favor** from Waylaid Crates, and buy
 - **Scan** prices every crate and every fill material on the auction house in a few seconds.
 - Lists every crate + bundle combination with its total cost and **cost per Merchant's
   Favor**, since crates pay different amounts of Favor (5 to 40).
-- **Use bag items** tick box: crates and materials you already carry are used first and cost
-  nothing, so a stack of Silverleaf in your bags takes the Silverleaf off the bill.
-- **In bags** tab: how many crates you can fill right now with what you carry, and a Buy
-  button for whatever is missing to pair them up.
+- **Use bags + bank** tick box: crates and materials you already own, in your bags or your
+  bank, are used first and cost nothing. A stack of Silverleaf in your bank takes the
+  Silverleaf off the bill, and the shopping list tells you to take it out.
+- Every crate name on the Crates tab shows how many of it your materials in bags + bank can
+  fill, e.g. **Expert Textiles (3)**.
+- **Bags & bank** tab: how many crates you can fill with what you own, how many right now from
+  your bags, and a Buy button for whatever is missing to pair them up.
 - **Buy** on any row puts that crate and its bundle on a shopping list.
 - **Favor needed**: type how much Favor you need, press **Plan**, and it works out the
   cheapest mix of crates and bundles that adds up to at least that much. The total cost is
@@ -36,8 +39,8 @@ which was checked against Blizzard's UI source for this build.
 Click the crate button on the minimap (the same icon as in the addon list) or type `/crates`.
 The window opens next to the auction house when that is open. It does not open by itself
 (`/crates autoshow on` if you want it to). Right-click the minimap button to jump straight to
-the In bags tab. Drag the button to move it around the minimap. Its tooltip shows your
-Merchant's Favor, how many crates your bags can fill, and any shopping list in progress.
+the Bags & bank tab. Drag the button to move it around the minimap. Its tooltip shows your
+Merchant's Favor, how many crates your bags and bank can fill, and any shopping list in progress.
 
 1. Press **Scan**. It prices 126 items: the 30 crates plus every fill material. That takes a
    few seconds (details under "Why the scan is quick" below). Prices marked `~` are floors:
@@ -47,8 +50,14 @@ Merchant's Favor, how many crates your bags can fill, and any shopping list in p
    overall is green. Columns: crate price, fill price (for the whole bundle, walking up the
    listings: if the cheapest 15 Silverleaf are 20c and the rest 30c, 20 Silverleaf costs
    15×20c + 5×30c), total, Favor, and cost per Favor. Click a header to sort. Hover a row to see
-   every bundle for that crate, how many are listed, and what you have in your bags.
-   - `bags` means you already have it, so it costs nothing (with **Use bag items** ticked).
+   every bundle for that crate, how many are listed, and how many you have in your bags and in
+   your bank.
+   - The number after a crate's name, like **Expert Textiles (3)**, is how many of that crate
+     the fill materials in your bags and bank can fill, counting all of its bundles. Your
+     crates are not part of that number, so it shows even when you still need to buy the crates.
+   - `bags` / `bank` in a price column means you already own it, so it costs nothing (with
+     **Use bags + bank** ticked). `/crates bank off` counts your bags only; the tick box then
+     reads **Use bag items**.
    - `none` means nothing is listed. `?` means the item has not been scanned yet.
    - Grey crate names are above your level and are left out of plans.
    - A red bundle needs more than one stack holds. Crates are reported to need the whole
@@ -60,12 +69,16 @@ Merchant's Favor, how many crates your bags can fill, and any shopping list in p
 4. The **Shopping list** tab shows the crates to fill and the items to buy: crates first,
    then materials, each with its planned price. Press **BUY** once per item, using the button,
    your key, or the **scroll wheel**.
-5. The **In bags** tab shows what you can fill right now. The tab reads "In bags (3)" when you
-   carry 3 crates that have a full bundle each. Per crate it lists empty crates, complete
-   bundles (and partial ones like `12/20 Silverleaf`), how many you can fill, the Favor that
-   is worth, and what is missing ("+2 crates" or "+1 bundle"). **Buy** on a row gets just
-   that: crates for spare bundles, or the cheapest bundle for each spare crate. A bundle
-   bigger than one stack does not count, and neither does a crate above your level.
+   If the list counts on items in your bank, it shows a **Take from your bank** section (and
+   says so in chat), since filling a crate needs the items in your bags.
+5. The **Bags & bank** tab shows what you can fill with everything you own. The tab reads
+   "Bags & bank (3)" when you own 3 crates that each have a full bundle. Per crate it lists
+   empty crates, complete bundles (and partial ones like `12/20 Silverleaf`), how many you can
+   fill, the Favor that is worth, and what is missing ("+2 crates" or "+1 bundle"). Counts
+   marked with a blue `*` include items in your bank. The summary line also says how many you
+   can fill right now from your bags alone. **Buy** on a row gets just what is missing: crates
+   for spare bundles, or the cheapest bundle for each spare crate. A bundle bigger than one
+   stack does not count, and neither does a crate above your level.
 
 ### Why the scan is quick
 
@@ -120,7 +133,7 @@ over those curves then finds how many of each crate reach the goal for the least
 - Favor past the goal is worth nothing. For a 7-Favor goal, one 10-Favor crate beats two
   5-Favor crates when it is cheaper, even though it "wastes" 3 Favor.
 - Large goals spread across crate types on their own, as the cheapest listings run out.
-- With **Use bag items**, what you carry is used first and only the missing units are bought.
+- With **Use bags + bank**, what you own is used first and only the missing units are bought.
 - If the goal cannot be reached from what is listed, the plan buys the most Favor available
   and says so.
 
@@ -134,7 +147,8 @@ over those curves then finds how many of each crate reach the goal for the least
 | `/crates goal <favor>` | cheapest way to that much Favor, as a shopping list |
 | `/crates top [n]` | the n cheapest crates per Favor, in chat |
 | `/crates buy` / `skip` / `cancel` | BUY press / skip the current item / drop the list |
-| `/crates bags on\|off` | count items already in your bags (also a tick box) |
+| `/crates bags on\|off` | count crates and materials you already own (also a tick box) |
+| `/crates bank on\|off` | include your bank in what you own (default on) |
 | `/crates wheel on\|off` | scroll wheel presses BUY (also a tick box) |
 | `/crates tolerance <percent>` | how far a price may rise above the plan before BUY asks (default 5) |
 | `/crates favor <tier> <raw\|crafted> <n>` | set the Favor a crate pays (`/crates favor reset` restores the defaults) |
@@ -176,7 +190,8 @@ throttled auction house, including commodity quotes and the rule that purchases 
 press. The tests drive the addon through: scan, prices per Favor, bag counts, buying a single
 crate, price rises at the check and at the quote, a sold-out auction, the Favor planner
 (including the "one 10-Favor crate beats two 5-Favor crates" case), a crate selling out
-mid-list, the scroll wheel, the request gate, quick vs full scans, the In bags tab, and slash
+mid-list, the scroll wheel, the request gate, quick vs full scans, bags + bank counts,
+the minimap button, and slash
 commands. Run them with Lua 5.1, the
 game's Lua version:
 
@@ -187,6 +202,9 @@ python3 tests/run.py
 It needs `lua5.1` on PATH or `pip install lupa`.
 
 ## Things to verify in game
+
+- Bank counts come from the game's own item count (bags + bank). If they read 0 for your bank
+  on a fresh login, open the bank once.
 
 - Stack sizes and item names come from the client's item cache. The addon asks for all 126
   items at login, but a bundle is only stack-checked once its item has loaded.

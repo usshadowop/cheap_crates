@@ -28,7 +28,8 @@ ns.ADDON_NAME = ADDON_NAME
 ns.DEFAULTS = {
 	book = {},           -- itemID -> { t, commodity, est, listed, rows = { {unit, qty, buyout?, auctionID?} } }
 	lastScan = nil,      -- time() of the last completed scan
-	useBags = true,      -- count items already in your bags
+	useBags = true,      -- count crates and materials you already own (the "Use bags + bank" tick box)
+	useBank = true,      -- ...including your bank (/crates bank off: bags only)
 	bestOnly = false,    -- crates view: only the cheapest bundle of each crate
 	wheel = true,        -- mouse wheel presses BUY while a shopping list is active at the auction house
 	tolerance = 5,       -- % a price may rise above the plan before a purchase stops and asks
@@ -145,15 +146,46 @@ function ns.StackSize(id)
 end
 
 -- units of an item in your bags (bank not included)
-function ns.BagCount(id)
+local function Count(id, withBank)
 	local n
 	if C_Item and C_Item.GetItemCount then
-		n = C_Item.GetItemCount(id, false)
+		-- (item, includeBank, includeUses, includeReagentBank, includeAccountBank)
+		n = C_Item.GetItemCount(id, withBank, false, withBank, withBank)
 	elseif GetItemCount then
-		n = GetItemCount(id, false)
+		n = GetItemCount(id, withBank)
 	end
 	if type(n) ~= "number" or IsSecret(n) then return 0 end
 	return n
+end
+
+-- units of an item in your bags
+function ns.BagCount(id) return Count(id, false) end
+
+-- units in your bags, units in your bank
+function ns.ItemCounts(id)
+	local bags = Count(id, false)
+	return bags, math.max(0, Count(id, true) - bags)
+end
+
+-- units you own for pricing and plans: bags, plus bank unless /crates bank off
+function ns.OwnedCount(id)
+	local bags, bank = ns.ItemCounts(id)
+	if ns.db and ns.db.useBank == false then return bags end
+	return bags + bank
+end
+
+-- how many crates of this kind the fill materials in your bags and bank can fill (any of its
+-- bundles; a bundle bigger than one stack does not count)
+function ns.OwnedBundles(crate)
+	local total, fromBags = 0, 0
+	for _, o in ipairs(crate.fills) do
+		if not ns.StackBlocked(o) then
+			local bags, bank = ns.ItemCounts(o.item)
+			total = total + math.floor((bags + bank) / o.qty)
+			fromBags = fromBags + math.floor(bags / o.qty)
+		end
+	end
+	return total, fromBags
 end
 
 function ns.PlayerLevel()
@@ -268,11 +300,12 @@ function ns.Combos()
 	local list = {}
 	for _, c in ipairs(ns.CRATES) do
 		local favor = ns.FavorFor(c)
-		local cl = ns.NewLadder(c.id, db.useBags and ns.BagCount(c.id) or 0)
+		local cl = ns.NewLadder(c.id, db.useBags and ns.OwnedCount(c.id) or 0)
 		local cc = cl:Cost(0, 1)
+		local ownedBundles, bagBundles = ns.OwnedBundles(c)
 		local best
 		for _, o in ipairs(c.fills) do
-			local fl = ns.NewLadder(o.item, db.useBags and ns.BagCount(o.item) or 0)
+			local fl = ns.NewLadder(o.item, db.useBags and ns.OwnedCount(o.item) or 0)
 			local fc = fl:Cost(0, o.qty)
 			local stackBad, stack = ns.StackBlocked(o)
 			local row = {
@@ -286,6 +319,7 @@ function ns.Combos()
 				levelBlocked = ns.LevelBlocked(c),
 				stackBlocked = stackBad, stack = stack,
 				favorEst = ns.FavorIsEstimate(c),
+				ownedBundles = ownedBundles, bagBundles = bagBundles,
 			}
 			row.per = (row.total and favor > 0) and (row.total / favor) or nil
 			row.eligible = row.per ~= nil and not row.levelBlocked and not row.stackBlocked
@@ -315,38 +349,48 @@ function ns.Combos()
 end
 
 -------------------------------------------------------------------------------
--- What your bags can fill right now (In bags tab)
+-- What your bags and bank can fill (Bags & bank tab)
 -------------------------------------------------------------------------------
 
+-- Counts your bags AND bank. Filling needs the items on you, so canNow says how many your
+-- bags alone can fill.
 -- rows: one per crate you hold a crate or any fill material for
---   { crate, crates, bundles, can, favor, parts = { {fill, have, n, blocked} }, spareCrates, spareBundles }
--- sum: { can, favor, spareCrates, spareBundles }
+--   { crate, crates, cratesBank, bundles, bundlesBank, can, canNow, favor,
+--     parts = { {fill, have, bags, bank, n, nBags, blocked} }, spareCrates, spareBundles }
+-- sum: { can, canNow, favor, spareCrates, spareBundles }
 function ns.BagFill()
 	local rows = {}
-	local sum = { can = 0, favor = 0, spareCrates = 0, spareBundles = 0 }
+	local sum = { can = 0, canNow = 0, favor = 0, spareCrates = 0, spareBundles = 0 }
 	for _, c in ipairs(ns.CRATES) do
-		local crates = ns.BagCount(c.id)
-		local bundles, parts = 0, {}
+		local cratesBags, cratesBank = ns.ItemCounts(c.id)
+		local crates = cratesBags + cratesBank
+		local bundles, bundlesBags, parts = 0, 0, {}
 		for _, o in ipairs(c.fills) do
-			local have = ns.BagCount(o.item)
+			local bags, bank = ns.ItemCounts(o.item)
+			local have = bags + bank
 			if have > 0 then
 				-- a bundle bigger than one stack cannot go in (reported crate quirk)
 				local blocked = ns.StackBlocked(o)
 				local n = blocked and 0 or math.floor(have / o.qty)
+				local nBags = blocked and 0 or math.floor(bags / o.qty)
 				bundles = bundles + n
-				parts[#parts + 1] = { fill = o, have = have, n = n, blocked = blocked }
+				bundlesBags = bundlesBags + nBags
+				parts[#parts + 1] = { fill = o, have = have, bags = bags, bank = bank, n = n, nBags = nBags, blocked = blocked }
 			end
 		end
 		if crates > 0 or #parts > 0 then
 			local levelBlocked = ns.LevelBlocked(c)
 			local can = levelBlocked and 0 or math.min(crates, bundles)
+			local canNow = levelBlocked and 0 or math.min(cratesBags, bundlesBags)
 			local row = {
-				crate = c, crates = crates, bundles = bundles, can = can, favor = can * ns.FavorFor(c), parts = parts,
+				crate = c, crates = crates, cratesBank = cratesBank, bundles = bundles, bundlesBank = bundles - bundlesBags,
+				can = can, canNow = canNow, favor = can * ns.FavorFor(c), parts = parts,
 				spareCrates = math.max(0, crates - bundles), spareBundles = math.max(0, bundles - crates),
 				levelBlocked = levelBlocked,
 			}
 			rows[#rows + 1] = row
 			sum.can = sum.can + can
+			sum.canNow = sum.canNow + canNow
 			sum.favor = sum.favor + row.favor
 			sum.spareCrates = sum.spareCrates + row.spareCrates
 			sum.spareBundles = sum.spareBundles + row.spareBundles
@@ -380,24 +424,31 @@ local function Candidates()
 	return out
 end
 
+-- useBags: false = own nothing, true = what the settings count, "all" = bags and bank always
 local function NewLadderSet(useBags)
-	local set, have = {}, {}
+	local set, have, bags = {}, {}, {}
 	local function L(id)
 		local l = set[id]
 		if not l then
-			have[id] = useBags and ns.BagCount(id) or 0
+			if useBags == "all" then
+				local b, k = ns.ItemCounts(id)
+				have[id] = b + k
+			else
+				have[id] = useBags and ns.OwnedCount(id) or 0
+			end
+			bags[id] = useBags and ns.BagCount(id) or 0
 			l = ns.NewLadder(id, have[id])
 			set[id] = l
 		end
 		return l
 	end
-	return L, set, have
+	return L, set, have, bags
 end
 
 -- replays the chosen units on fresh ladders: per-unit cost, groups, totals and purchase list
 local function FinishPlan(units, useBags, target, short)
-	local L, set, have = NewLadderSet(useBags)
-	local plan = { units = units, groups = {}, favor = 0, cost = 0, target = target, short = short, useBags = useBags, have = have, ladders = set }
+	local L, set, have, bags = NewLadderSet(useBags)
+	local plan = { units = units, groups = {}, favor = 0, cost = 0, target = target, short = short, useBags = useBags, have = have, bags = bags, ladders = set }
 	local byKey = {}
 	for _, u in ipairs(units) do
 		local cl, fl = L(u.crate.id), L(u.fill.item)
@@ -421,14 +472,16 @@ local function FinishPlan(units, useBags, target, short)
 	end
 	-- purchases: crates first (they are the scarce part), then fill materials
 	plan.buys = {}
+	plan.fromBank = {}
 	local seen = {}
 	local function add(id, isCrate)
 		if seen[id] then return end
 		seen[id] = true
 		local l = set[id]
 		local n = l:ToBuy()
-		plan.usedFromBags = plan.usedFromBags or {}
-		plan.usedFromBags[id] = math.min(l.pos, l.have)
+		-- what the plan uses from your bank: anything owned beyond what your bags hold
+		local fromBank = math.min(l.pos, l.have) - math.min(l.pos, bags[id] or 0)
+		if fromBank > 0 then plan.fromBank[#plan.fromBank + 1] = { itemID = id, qty = fromBank } end
 		if n > 0 then
 			plan.buys[#plan.buys + 1] = { itemID = id, qty = n, budget = l:Cost(l.have, l.pos) or 0, isCrate = isCrate, have = l.have }
 		end

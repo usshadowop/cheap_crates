@@ -163,6 +163,7 @@ W.items = {
 }
 W.bags = { [0] = { 6948, 2589 } }
 W.bagCount = {}          -- itemID -> units in bags (C_Item.GetItemCount)
+W.bankCount = {}         -- itemID -> units in the bank
 W.favor = 0
 W.level = 60
 function UnitLevel() return W.level end
@@ -178,7 +179,8 @@ NUM_TOTAL_EQUIPPED_BAG_SLOTS = 5
 C_Item = {
 	GetItemInfoInstant = function(x) return tonumber(x) end, -- Forever: name lookups return nothing
 	GetItemInfo = function(id) local it = W.items[id]; if it then return it.name, "|cffffffff|Hitem:" .. id .. "::::::::::|h[" .. it.name .. "]|h|r", 1, it.infoLevel or it.ilvl or 1, 1, "Trade Goods", "Trade Goods", it.stack or 200, "", 1, it.sellPrice end end,
-	GetItemCount = function(id) return W.bagCount[id] or 0 end,
+	-- (item, includeBank, ...): bags, plus the bank when asked
+	GetItemCount = function(id, bank) return (W.bagCount[id] or 0) + (bank and W.bankCount[id] or 0) end,
 	GetItemIconByID = function() return 1 end,
 	RequestLoadItemDataByID = function() end,
 }

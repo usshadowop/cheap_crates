@@ -40,6 +40,14 @@ local function EstimatedBuys(plan)
 	return ids
 end
 
+-- the plan counts on items in your bank: say what to take out
+local function PrintFromBank(plan)
+	if not plan.fromBank or #plan.fromBank == 0 then return end
+	local parts = {}
+	for _, f in ipairs(plan.fromBank) do parts[#parts + 1] = ("%d x %s"):format(f.qty, ns.ItemName(f.itemID)) end
+	ns.Print("|cff66ccffTake from your bank:|r %s (already yours, so not bought).", table.concat(parts, ", "))
+end
+
 -- explicit crates + bundles -> shopping list (exact prices read first, when needed)
 local function BuyUnits(list, title, useBags, exact)
 	if QueueBusy() then return end
@@ -57,6 +65,7 @@ local function BuyUnits(list, title, useBags, exact)
 		ns.Print("|cffffff00Not enough listed for %s at the last scan.|r The list will buy what is there; scan again for fresh prices.", title)
 	end
 	ns.StartQueue(plan, title)
+	PrintFromBank(plan)
 	ns.offset = 0
 end
 
@@ -65,8 +74,9 @@ function ns.BuyCombo(combo)
 		("%s + %d %s"):format(combo.crate.short, combo.fill.qty, ns.ItemName(combo.fill.item)), ns.db.useBags)
 end
 
--- In bags tab: buy what is missing so every crate in your bags gets a bundle and every
--- complete bundle gets a crate (always counts your bags, whatever the tick box says)
+-- Bags & bank tab: buy what is missing so every crate you own gets a bundle and every
+-- complete bundle gets a crate (always counts your bags and bank, whatever the settings say,
+-- so it matches the counts on that tab)
 function ns.BuyMissing(row)
 	local units = {}
 	for _, p in ipairs(row.parts) do
@@ -85,7 +95,7 @@ function ns.BuyMissing(row)
 		units[#units + 1] = { crate = row.crate, fill = best.fill, count = extra }
 	end
 	if #units == 0 then return end
-	BuyUnits(units, ("Complete %s from bags"):format(row.crate.short), true)
+	BuyUnits(units, ("Complete %s"):format(row.crate.short), "all")
 end
 
 function ns.PlanGoal(n, exact)
@@ -127,6 +137,7 @@ function ns.PlanGoal(n, exact)
 		ns.Print("  %dx %s with %d %s each: %s", g.count, g.crate.short, g.fill.qty, ns.ItemName(g.fill.item), ns.CoinsFull(g.cost))
 	end
 	ns.StartQueue(plan, ("Goal: %d Favor"):format(n))
+	PrintFromBank(plan)
 	ns.offset = 0
 end
 
@@ -209,6 +220,9 @@ end
 
 function handlers.PLAYER_REGEN_ENABLED() ns.ApplyWheelBinding() end
 function handlers.BAG_UPDATE_DELAYED() ns.UpdateUI() end
+function handlers.BANKFRAME_OPENED() ns.UpdateUI() end
+function handlers.BANKFRAME_CLOSED() ns.UpdateUI() end
+function handlers.PLAYERBANKSLOTS_CHANGED() ns.UpdateUI() end
 function handlers.CURRENCY_DISPLAY_UPDATE() ns.UpdateUI() end
 function handlers.PLAYER_LEVEL_UP() ns.UpdateUI() end
 function handlers.GET_ITEM_INFO_RECEIVED() ns.UpdateUI() end
@@ -279,7 +293,8 @@ local function Help()
 	ns.Print("  /crates top [n]  the n cheapest crates per Favor in chat")
 	ns.Print("  /crates buy  press BUY (same as the button / key binding)")
 	ns.Print("  /crates skip | cancel  skip the current item / drop the shopping list")
-	ns.Print("  /crates bags on|off  count items already in your bags")
+	ns.Print("  /crates bags on|off  count crates and materials you already own (also a tick box)")
+	ns.Print("  /crates bank on|off  include your bank in what you own (now %s)", ns.db.useBank == false and "off" or "on")
 	ns.Print("  /crates wheel on|off  mouse wheel presses BUY while a shopping list is active")
 	ns.Print("  /crates tolerance <percent>  how far a price may rise above the plan before it asks (now %d%%)", ns.db.tolerance or 5)
 	ns.Print("  /crates favor <tier> <raw|crafted> <n> | favor reset  set the Favor a crate pays")
@@ -339,7 +354,11 @@ SlashCmdList.CHEAPCRATES = function(msg)
 		ns.CancelQueue()
 	elseif cmd == "bags" then
 		db.useBags = OnOff(rest:lower())
-		ns.Print("Use bag items %s.", db.useBags and "on" or "off")
+		ns.Print("Counting what you own %s.", db.useBags and "on" or "off")
+		ns.UpdateUI(true)
+	elseif cmd == "bank" then
+		db.useBank = OnOff(rest:lower())
+		ns.Print("Your bank %s what you own for prices and plans.", db.useBank and "counts toward" or "no longer counts toward")
 		ns.UpdateUI(true)
 	elseif cmd == "wheel" then
 		ns.SetWheel(OnOff(rest:lower()))

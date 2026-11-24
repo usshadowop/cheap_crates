@@ -2,7 +2,7 @@
 	Cheap Crates - minimap button.
 
 	Uses the same icon as the addon list (the .toc's IconTexture). Left-click opens or closes
-	the window, right-click opens it on the In bags tab, drag moves it around the minimap.
+	the window, right-click opens it on the Bags & bank tab, drag moves it around the minimap.
 	/crates minimap off hides it.
 ]]
 
@@ -108,7 +108,8 @@ button:SetScript("OnEnter", function(self)
 	if favor then GameTooltip:AddDoubleLine("Merchant's Favor", tostring(favor), 0.8, 0.8, 0.8, 1, 1, 1) end
 	local _, sum = ns.BagFill()
 	if sum.can > 0 then
-		GameTooltip:AddDoubleLine("Ready to fill from bags", ("%d crate%s (%d Favor)"):format(sum.can, sum.can == 1 and "" or "s", sum.favor), 0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		GameTooltip:AddDoubleLine("Can fill (bags + bank)", ("%d crate%s (%d Favor)"):format(sum.can, sum.can == 1 and "" or "s", sum.favor), 0.8, 0.8, 0.8, 0.3, 1, 0.3)
+		if sum.canNow < sum.can then GameTooltip:AddDoubleLine("Right now, from your bags", tostring(sum.canNow), 0.8, 0.8, 0.8, 1, 1, 1) end
 	end
 	local q = S.queue
 	if q and not q.finished then
@@ -118,7 +119,7 @@ button:SetScript("OnEnter", function(self)
 	GameTooltip:AddDoubleLine("Prices", ns.db.lastScan and (ns.Age(ns.db.lastScan) .. " old") or "not scanned yet", 0.8, 0.8, 0.8, 1, 1, 1)
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine("|cffffffffClick|r  open / close", 0.7, 0.7, 0.7)
-	GameTooltip:AddLine("|cffffffffRight-click|r  what your bags can fill", 0.7, 0.7, 0.7)
+	GameTooltip:AddLine("|cffffffffRight-click|r  what your bags and bank can fill", 0.7, 0.7, 0.7)
 	GameTooltip:AddLine("|cffffffffDrag|r  move this button", 0.7, 0.7, 0.7)
 	GameTooltip:Show()
 end)

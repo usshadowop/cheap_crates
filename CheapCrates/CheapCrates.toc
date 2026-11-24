@@ -2,7 +2,7 @@
 ## Title: Cheap Crates
 ## Notes: Prices every Waylaid Crate and its fill bundles on the auction house, ranks them by cost per Merchant's Favor, and buys the cheapest set for the Favor you need.
 ## Author: usshadowop
-## Version: 0.3.0
+## Version: 0.4.0
 ## SavedVariables: CheapCratesDB
 ## IconTexture: Interface\Icons\INV_Crate_02
 

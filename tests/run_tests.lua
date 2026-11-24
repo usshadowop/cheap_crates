@@ -452,7 +452,7 @@ RunUntil(function() return ns.S.queue ~= nil end, 20)
 check(ns.S.queue and ns.S.queue.plan.target == 25 and ns.S.queue.plan.cost == 18500, "then plans 25 Favor for 18500")
 ns.CancelQueue()
 
-print("== In bags tab")
+print("== Bags & bank tab (bags only)")
 Listings(); Rescan()
 W.bagCount = { [HERBS] = 1, [SILVERLEAF] = 45, [BRIAR] = 10, [MAGE] = 4, [FABRICS] = 2, [LINEN] = 60, [EHERBS] = 1, [FADE] = 10 }
 local rows, sum = ns.BagFill()
@@ -474,11 +474,11 @@ check(bagRow(JHERBS) == nil, "crates with nothing in bags are not listed")
 CheapCratesDB.view = "crates"
 ns.UpdateUI(true)
 local bagsTab
-for _, f in ipairs(W.frames) do if f._parent == CheapCratesFrame and f._kind == "Button" and type(f._text) == "string" and f._text:find("^In bags") then bagsTab = f end end
-check(bagsTab and bagsTab:GetText() == "In bags (1)", "tab shows how many crates you can fill")
+for _, f in ipairs(W.frames) do if f._parent == CheapCratesFrame and f._kind == "Button" and type(f._text) == "string" and f._text:find("^Bags & bank") then bagsTab = f end end
+check(bagsTab and bagsTab:GetText() == "Bags & bank (1)", "tab shows how many crates you can fill")
 click(bagsTab)
 check(CheapCratesDB.view == "bags", "tab opens the bags view")
-check(ns.rows[1].data.kind == "text" and ns.rows[1].data.text:find("Ready to fill now") and ns.rows[1].data.text:find("1 crate"), "summary line: ready to fill now")
+check(ns.rows[1].data.kind == "text" and ns.rows[1].data.text:find("Can fill") and ns.rows[1].data.text:find("1 crate") and ns.rows[1].data.text:find("1 from your bags right now"), "summary line: can fill 1, 1 right now")
 check(ns.rows[2].data.kind == "bag" and ns.rows[2].data.bag.crate.id == HERBS, "crates you can fill listed first")
 check(ns.rows[2].cols.total:GetText():find("1") and ns.rows[2].cols.per:GetText() == "+2 crates", "row shows can fill 1, missing +2 crates")
 -- Buy on that row: the 2 crates the spare bundles need, nothing else
@@ -503,7 +503,95 @@ for i = 1, 14 do local d = ns.rows[i].data; if d and d.kind == "bag" and d.bag.c
 check(erUI and not erUI.buy:IsEnabled(), "nothing to buy for a crate above your level")
 W.bagCount = {}
 ns.UpdateUI(true)
-check(bagsTab:GetText() == "In bags" and ns.rows[1].data.text:find("No Waylaid Crates"), "empty bags: says so")
+check(bagsTab:GetText() == "Bags & bank" and ns.rows[1].data.text:find("No Waylaid Crates"), "empty bags: says so")
+CheapCratesDB.view = "crates"
+
+print("== the bank counts too")
+Listings(); Rescan()
+CheapCratesDB.useBags = true
+W.bagCount = { [LLEATHER] = 10, [SILVERLEAF] = 45 }
+W.bankCount = { [LLEATHER] = 30, [BRIAR] = 10, [TEXTILES] = 1, [LINEN] = 100 }
+local c2 = ns.Combos()
+local tl = findCombo(c2, TEXTILES, LLEATHER)
+check(tl.ownedBundles == 2 and tl.bagBundles == 0, "Apprentice Textiles: 40 Light Leather (10 bags + 30 bank) fill 2; Linen does not count (bigger than a stack)")
+check(findCombo(c2, HERBS, SILVERLEAF).ownedBundles == 3, "Apprentice Herbs: 2 bundles of Silverleaf in bags + 1 of Briarthorn in the bank = 3")
+check(findCombo(c2, FABRICS, HIDE).ownedBundles == 0, "Apprentice Fabrics: nothing owned")
+CheapCratesDB.view = "crates"; CheapCratesDB.bestOnly = false
+ns.UpdateUI(true)
+local function nameCell(crateID)
+	for i = 1, 14 do
+		local d = ns.rows[i].data
+		if d and d.kind == "combo" and d.combo.crate.id == crateID then return ns.rows[i].cols.name:GetText() end
+	end
+end
+check(nameCell(TEXTILES):find("Apprentice Textiles") and nameCell(TEXTILES):find("%(2%)"), "crates tab: \"Apprentice Textiles (2)\"")
+check(nameCell(HERBS):find("%(3%)"), "crates tab: \"Apprentice Herbs (3)\"")
+check(not nameCell(FABRICS):find("%("), "no number when you own none of its materials")
+check(tl.total == 0, "crate in the bank and leather in bags + bank: Textiles costs nothing")
+local tlRow
+for i = 1, 14 do
+	local d = ns.rows[i].data
+	if d and d.kind == "combo" and d.combo.crate.id == TEXTILES and d.combo.fill.item == LLEATHER then tlRow = ns.rows[i] end
+end
+check(tlRow.cols.fillc:GetText():find("bank") and tlRow.cols.crate:GetText():find("bank"), "price cells say the items are in the bank")
+local herbsSilverRow
+for i = 1, 14 do
+	local d = ns.rows[i].data
+	if d and d.kind == "combo" and d.combo.crate.id == HERBS and d.combo.fill.item == SILVERLEAF then herbsSilverRow = ns.rows[i] end
+end
+check(herbsSilverRow.cols.fillc:GetText():find("bags"), "... or in your bags")
+herbsSilverRow:GetScript("OnEnter")(herbsSilverRow)
+check(true, "row tooltip with bag and bank counts draws")
+W.slash("bank off")
+check(CheapCratesDB.useBank == false and findCombo(ns.Combos(), TEXTILES, LLEATHER).total == 1000 + 10 * 100,
+	"/crates bank off: only bags count (buy the crate and 10 leather)")
+check(findCombo(ns.Combos(), TEXTILES, LLEATHER).ownedBundles == 2, "...but the (2) still counts bags + bank")
+check(CheapCratesBagsCheck.label:GetText() == "Use bag items", "tick box reads \"Use bag items\" with the bank off")
+W.slash("bank on")
+ns.UpdateUI(true)
+check(CheapCratesBagsCheck.label:GetText() == "Use bags + bank", "and \"Use bags + bank\" with it on")
+-- a plan that uses the bank says what to take out
+W.chat = {}
+ns.S.queue = nil
+ns.BuyCombo(findCombo(ns.Combos(), TEXTILES, LLEATHER))
+RunUntil(function() return ns.S.queue ~= nil end, 5)
+q = ns.S.queue
+check(q and #q.steps == 0 and q.finished, "nothing to buy: the crate and the leather are already yours")
+local fb = {}
+for _, f in ipairs(q.plan.fromBank) do fb[f.itemID] = f.qty end
+check(fb[TEXTILES] == 1 and fb[LLEATHER] == 10 and fb[SILVERLEAF] == nil, "take from the bank: the crate and 10 leather (the other 10 are in your bags)")
+check(lastChat("Take from your bank") and lastChat("10 x Light Leather"), "chat says what to take out of the bank")
+CheapCratesDB.view = "shop"; ns.UpdateUI(true)
+local sawBank = false
+for i = 1, 14 do local d = ns.rows[i].data; if d and d.kind == "text" and d.text:find("Take from your bank") then sawBank = true end end
+check(sawBank, "shopping list shows what to take from the bank")
+ns.S.queue = nil
+-- Bags & bank tab
+local brows, bsum = ns.BagFill()
+local trow
+for _, r in ipairs(brows) do if r.crate.id == TEXTILES then trow = r end end
+check(trow and trow.crates == 1 and trow.cratesBank == 1 and trow.bundles == 2 and trow.bundlesBank == 2 and trow.can == 1 and trow.canNow == 0,
+	"Textiles: crate in the bank, 2 bundles needing bank leather: can fill 1, none right now from bags")
+check(bsum.can == 1 and bsum.canNow == 0, "total: 1 with the bank, 0 right now")
+CheapCratesDB.view = "bags"; ns.UpdateUI(true)
+check(ns.rows[1].data.text:find("1 crate") and ns.rows[1].data.text:find("0 from your bags right now"), "summary says 1 with the bank, 0 right now")
+local trUI
+for i = 1, 14 do local d = ns.rows[i].data; if d and d.kind == "bag" and d.bag.crate.id == TEXTILES then trUI = ns.rows[i] end end
+check(trUI.cols.crate:GetText():find("%*") and trUI.cols.fill:GetText():find("bank"), "bank items marked in the row")
+trUI:GetScript("OnEnter")(trUI)
+CheapCratesMinimapButton:GetScript("OnEnter")(CheapCratesMinimapButton)
+check(true, "tooltips draw")
+-- Buy on that row uses the bank as well: 1 crate, 2 bundles -> 1 more crate
+W.slash("bank off")
+click(trUI.buy)
+RunUntil(function() return ns.S.queue ~= nil end, 5)
+q = ns.S.queue
+check(q and #q.steps == 1 and q.steps[1].itemID == TEXTILES and q.steps[1].qty == 1,
+	"Buy on the Bags & bank tab counts the bank even with /crates bank off: just 1 more crate")
+ns.CancelQueue()
+W.slash("bank on")
+W.bagCount, W.bankCount = {}, {}
+CheapCratesDB.useBags = false
 CheapCratesDB.view = "crates"
 
 print("== minimap button")
